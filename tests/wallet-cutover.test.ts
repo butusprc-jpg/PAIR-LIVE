@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {walletPath} from '../lib/server/wallet-cutover';
+test('legacy is available only before any cutover and while environment gate is off',()=>{assert.equal(walletPath('LEGACY',false,false,false),'legacy');for(const values of [['LEGACY',false,true,false],['LEGACY',false,false,true],['CUTOVER_PENDING',false,false,false],['WALLET_SUSPENDED',false,true,false]] as [Parameters<typeof walletPath>[0],boolean,boolean,boolean][])assert.throws(()=>walletPath(...values),/wallet_cutover_gate_mismatch/)});
+test('active wallet requires both persistent and environment gates',()=>{assert.equal(walletPath('WALLET_ACTIVE',true,true,true),'wallet');for(const values of [['WALLET_ACTIVE',true,true,false],['WALLET_ACTIVE',false,true,true],['WALLET_ACTIVE',true,false,true]] as [Parameters<typeof walletPath>[0],boolean,boolean,boolean][])assert.throws(()=>walletPath(...values),/wallet_cutover_gate_mismatch/)});

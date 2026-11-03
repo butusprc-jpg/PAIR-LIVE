@@ -1,0 +1,7 @@
+import {adminAccess,adminDenied} from '../../../../lib/server/admin-auth';
+import {database} from '../../../../lib/server/db';
+import {updateDurationForNextRound} from '../../../../lib/rounds/store';
+import {RoundError} from '../../../../lib/rounds/core';
+export const runtime='nodejs';
+export async function GET(request:Request){try{const access=await adminAccess(request,['admin','operator','viewer']);if(!access.ok)return adminDenied(access.error);const state=await database().query('SELECT duration_minutes,updated_at FROM round_settings WHERE id=1');return Response.json({durationMinutes:Number(state.rows[0]?.duration_minutes||5),updatedAt:state.rows[0]?.updated_at},{headers:{'Cache-Control':'no-store'}})}catch{return Response.json({error:'settings_unavailable'},{status:503})}}
+export async function POST(request:Request){try{const access=await adminAccess(request,['admin'],true);if(!access.ok)return adminDenied(access.error);const body=await request.json();if(!Number.isInteger(body.durationMinutes)||body.durationMinutes<1||body.durationMinutes>60)return Response.json({error:'invalid_duration'},{status:400});const result=await updateDurationForNextRound(body.durationMinutes);return Response.json(result,{headers:{'Cache-Control':'no-store'}})}catch(error){if(error instanceof RoundError)return Response.json({error:error.code},{status:error.status});return Response.json({error:'settings_unavailable'},{status:503})}}

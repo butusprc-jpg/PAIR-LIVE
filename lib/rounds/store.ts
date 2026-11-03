@@ -3,6 +3,8 @@ import {database} from '../server/db';
 import {RoundError,validateDuration,validateEntry} from './core';
 import type {EntryInput,Round} from './core';
 import {applyWalletMutationWithClient} from '../../modules/member-wallet/server/postgres';
+import {walletPathFromDatabase} from '../server/wallet-cutover';
+import {enforceStreamRoomPolicy} from '../stream/round-policy';
 function asIso(value:unknown){return value instanceof Date?value.toISOString():new Date(String(value)).toISOString()}
 function mapRound(row:Record<string,unknown>):Round{return {id:String(row.id),opensAt:asIso(row.opens_at),closesAt:asIso(row.closes_at),durationMinutes:Number(row.duration_minutes),status:row.status as Round['status'],closedAt:row.closed_at?asIso(row.closed_at):null,settledAt:row.settled_at?asIso(row.settled_at):null,resultNumber:row.result_number?String(row.result_number):null}}
 async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
@@ -22,7 +24,7 @@ async function transition(client:PoolClient){
  return {round:mapRound(row),serverTime:now};
 }
 export async function currentRound(){return inTransaction(async client=>transition(client))}
-export async function tickRoundEngine(){return inTransaction(async client=>{
+export async function tickRoundEngine(){await enforceStreamRoomPolicy();return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=await transition(client);
   if(current.round)return current;
@@ -51,10 +53,7 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  if(prior.rows[0]){const row=prior.rows[0];if(String(row.round_id)!==roundId||row.side!==input.side||Number(row.demo_points)!==input.demoPoints)throw new RoundError('idempotency_conflict',409);return {id:row.id,roundId:String(row.round_id),status:row.status,replayed:true}}
  const now=await dbNow(client);
  if(round.status!=='OPEN'||new Date(now)>=new Date(round.closes_at))throw new RoundError('round_closed',409);
- const gateTable=await client.query("SELECT to_regclass('member_wallet_runtime_state') IS NOT NULL AS present");
- let walletEnabled=false;if(gateTable.rows[0]?.present){const gate=await client.query('SELECT enabled FROM member_wallet_runtime_state WHERE id=1 FOR SHARE');walletEnabled=gate.rows[0]?.enabled===true}
- const cutoverVerified=process.env.PAIR_WALLET_CUTOVER_VERIFIED==='true';
- if(walletEnabled!==cutoverVerified)throw new RoundError('wallet_cutover_gate_mismatch',503);
+ const walletEnabled=(await walletPathFromDatabase(client))==='wallet';
  let walletBalance:number|undefined;
  if(walletEnabled){const member=await client.query("SELECT id FROM members WHERE id=$1 AND status='active'",[memberId]);if(!member.rows[0])throw new RoundError('member_unavailable',403);
   try{const applied=await applyWalletMutationWithClient(client,{memberId,type:'DEMO_USE',points:input.demoPoints,referenceId:`ROUND_${roundId}_${input.idempotencyKey}`,idempotencyKey:input.idempotencyKey,actor:'round-engine',source:'round'});walletBalance=applied.wallet.availablePoints}catch(error){const code=error instanceof Error?error.message:'';if(code==='INSUFFICIENT_POINTS')throw new RoundError('insufficient_demo_points',409);if(code==='FROZEN')throw new RoundError('wallet_frozen',409);if(code==='NOT_ACTIVATED')throw new RoundError('wallet_not_activated',503);throw error}

@@ -11,11 +11,11 @@ test('PostgreSQL wallet and round entry commit/rollback, replay and concurrency'
  let appPool:Pool|undefined;
  try{
   await admin.query(`CREATE SCHEMA ${schema}`);const url=new URL(testUrl!);url.searchParams.set('options',`-csearch_path=${schema}`);process.env.DATABASE_URL=url.toString();process.env.PAIR_WALLET_CUTOVER_VERIFIED='true';appPool=new Pool({connectionString:url.toString()});
-  for(const path of ['migrations/001_members.sql','migrations/002_round_engine.sql','migrations/003_ocr_evidence.sql','migrations/004_evidence_audit.sql','modules/member-wallet/migrations/001_member_wallet.sql','migrations/005_wallet_round_integration.sql'])await appPool.query(await readFile(join(process.cwd(),path),'utf8'));
+  for(const path of ['migrations/001_members.sql','migrations/002_round_engine.sql','migrations/003_ocr_evidence.sql','migrations/004_evidence_audit.sql','modules/member-wallet/migrations/001_member_wallet.sql','migrations/005_wallet_round_integration.sql','migrations/006_wallet_cutover_state.sql'])await appPool.query(await readFile(join(process.cwd(),path),'utf8'));
   const created=await appPool.query("INSERT INTO members(display_name,demo_points) VALUES('wallet-test',100) RETURNING id");const member=created.rows[0].id as string;
   await appPool.query("SELECT set_config('pair_live.member_id',$1,false)",[member]);
   await appPool.query('INSERT INTO member_wallets(member_id,available_points) VALUES($1,100)',[member]);
-  await appPool.query("UPDATE member_wallet_runtime_state SET enabled=true,cutover_at=now() WHERE id=1");
+  await appPool.query("UPDATE member_wallet_runtime_state SET phase='CUTOVER_PENDING' WHERE id=1");await appPool.query("UPDATE member_wallet_runtime_state SET phase='WALLET_ACTIVE',enabled=true,ever_cutover=true,cutover_at=now() WHERE id=1");
   const {tickRoundEngine,submitDemoEntry}=await import('../lib/rounds/store');const {database}=await import('../lib/server/db');const state=await tickRoundEngine();const roundId=state.round!.id;
   const submit=(points:number,key=randomUUID(),side:'even'|'odd'='even')=>submitDemoEntry(member,roundId,{side,demoPoints:points,idempotencyKey:key});
   const key=randomUUID();const first=await submit(30,key);assert.equal(first.replayed,false);const replay=await submit(30,key);assert.equal(replay.replayed,true);
