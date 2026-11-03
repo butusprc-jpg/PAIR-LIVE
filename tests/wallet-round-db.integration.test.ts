@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {Pool} from 'pg';
+const testUrl=process.env.WALLET_TEST_DATABASE_URL;
+test('PostgreSQL wallet and round entry commit/rollback, replay and concurrency', {skip:!testUrl},async()=>{
+ const schema=`wallet_test_${randomUUID().replaceAll('-','')}`;
+ const admin=new Pool({connectionString:testUrl});const originalUrl=process.env.DATABASE_URL,originalGate=process.env.PAIR_WALLET_CUTOVER_VERIFIED;
+ let appPool:Pool|undefined;
+ try{
+  await admin.query(`CREATE SCHEMA ${schema}`);const url=new URL(testUrl!);url.searchParams.set('options',`-csearch_path=${schema}`);process.env.DATABASE_URL=url.toString();process.env.PAIR_WALLET_CUTOVER_VERIFIED='true';appPool=new Pool({connectionString:url.toString()});
+  for(const path of ['migrations/001_members.sql','migrations/002_round_engine.sql','migrations/003_ocr_evidence.sql','migrations/004_evidence_audit.sql','modules/member-wallet/migrations/001_member_wallet.sql','migrations/005_wallet_round_integration.sql'])await appPool.query(await readFile(join(process.cwd(),path),'utf8'));
+  const created=await appPool.query("INSERT INTO members(display_name,demo_points) VALUES('wallet-test',100) RETURNING id");const member=created.rows[0].id as string;
+  await appPool.query("SELECT set_config('pair_live.member_id',$1,false)",[member]);
+  await appPool.query('INSERT INTO member_wallets(member_id,available_points) VALUES($1,100)',[member]);
+  await appPool.query("UPDATE member_wallet_runtime_state SET enabled=true,cutover_at=now() WHERE id=1");
+  const {tickRoundEngine,submitDemoEntry}=await import('../lib/rounds/store');const {database}=await import('../lib/server/db');const state=await tickRoundEngine();const roundId=state.round!.id;
+  const submit=(points:number,key=randomUUID(),side:'even'|'odd'='even')=>submitDemoEntry(member,roundId,{side,demoPoints:points,idempotencyKey:key});
+  const key=randomUUID();const first=await submit(30,key);assert.equal(first.replayed,false);const replay=await submit(30,key);assert.equal(replay.replayed,true);
+  let counts=await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member]);assert.equal(Number(counts.rows[0].available_points),70);
+  assert.equal(Number((await appPool.query('SELECT demo_points FROM members WHERE id=$1',[member])).rows[0].demo_points),100);
+  await assert.rejects(appPool.query('UPDATE members SET demo_points=99 WHERE id=$1',[member]),/legacy_demo_points_locked_after_wallet_cutover/);
+  await assert.rejects(submit(100),/INSUFFICIENT_POINTS|insufficient_demo_points/);
+  await appPool.query("CREATE FUNCTION fail_odd_entry() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.side='odd' THEN RAISE EXCEPTION 'forced_entry_failure'; END IF; RETURN NEW; END$$");
+  await appPool.query('CREATE TRIGGER fail_odd BEFORE INSERT ON round_entries FOR EACH ROW EXECUTE FUNCTION fail_odd_entry()');
+  await assert.rejects(submit(10,randomUUID(),'odd'),/forced_entry_failure/);
+  assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member])).rows[0].available_points),70);
+  await appPool.query('DROP TRIGGER fail_odd ON round_entries');
+  await appPool.query("CREATE FUNCTION fail_wallet_ledger() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.points=11 THEN RAISE EXCEPTION 'forced_ledger_failure'; END IF; RETURN NEW; END$$");
+  await appPool.query('CREATE TRIGGER fail_ledger BEFORE INSERT ON member_wallet_ledger FOR EACH ROW EXECUTE FUNCTION fail_wallet_ledger()');
+  await assert.rejects(submit(11),/forced_ledger_failure/);
+  assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member])).rows[0].available_points),70);
+  await appPool.query('DROP TRIGGER fail_ledger ON member_wallet_ledger');
+  const concurrent=await Promise.allSettled([submit(50),submit(50)]);assert.equal(concurrent.filter(x=>x.status==='fulfilled').length,1);assert.equal(concurrent.filter(x=>x.status==='rejected').length,1);
+  counts=await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member]);assert.equal(Number(counts.rows[0].available_points),20);
+  const ledger=await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_USE'",[member]);assert.equal(ledger.rows[0].n,2);
+  const entries=await appPool.query('SELECT count(*)::int AS n FROM round_entries WHERE member_id=$1',[member]);assert.equal(entries.rows[0].n,2);
+  await database().end();
+ }finally{if(originalUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=originalUrl;if(originalGate===undefined)delete process.env.PAIR_WALLET_CUTOVER_VERIFIED;else process.env.PAIR_WALLET_CUTOVER_VERIFIED=originalGate;await appPool?.end().catch(()=>{});await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});await admin.end()}
+});

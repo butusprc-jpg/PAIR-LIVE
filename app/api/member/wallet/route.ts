@@ -1,0 +1,7 @@
+import {NextResponse} from 'next/server';
+import {currentMember} from '../../../../lib/server/auth-http';
+import {walletModule,walletRuntimeState} from '../../../../lib/server/wallet';
+import {database} from '../../../../lib/server/db';
+export const runtime='nodejs';
+const headers={'Cache-Control':'private, no-store'};
+export async function GET(){try{const member=await currentMember();if(!member)return NextResponse.json({error:'not_authenticated'},{status:401,headers});const state=await walletRuntimeState();if(state!=='active')return NextResponse.json({error:state==='mismatch'?'wallet_gate_mismatch':'wallet_not_activated'},{status:503,headers});const module=walletModule(),context={id:member.id};const existing=await module.getWallet(context,member.id);if(existing.ok)return NextResponse.json({wallet:existing.value},{headers});if(existing.error!=='NOT_FOUND')return NextResponse.json({error:existing.error},{status:503,headers});const cutover=await database().query('SELECT m.created_at,s.cutover_at FROM members m CROSS JOIN member_wallet_runtime_state s WHERE m.id=$1 AND s.id=1',[member.id]);if(!cutover.rows[0]||new Date(cutover.rows[0].created_at)<new Date(cutover.rows[0].cutover_at))return NextResponse.json({error:'wallet_reconciliation_required'},{status:503,headers});const ensured=await module.ensureWallet(context,member.id);if(!ensured.ok)return NextResponse.json({error:ensured.error},{status:503,headers});return NextResponse.json({wallet:ensured.value},{headers})}catch{return NextResponse.json({error:'wallet_unavailable'},{status:503,headers})}}

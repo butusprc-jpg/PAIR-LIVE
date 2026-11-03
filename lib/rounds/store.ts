@@ -2,6 +2,7 @@ import type {PoolClient} from 'pg';
 import {database} from '../server/db';
 import {RoundError,validateDuration,validateEntry} from './core';
 import type {EntryInput,Round} from './core';
+import {applyWalletMutationWithClient} from '../../modules/member-wallet/server/postgres';
 function asIso(value:unknown){return value instanceof Date?value.toISOString():new Date(String(value)).toISOString()}
 function mapRound(row:Record<string,unknown>):Round{return {id:String(row.id),opensAt:asIso(row.opens_at),closesAt:asIso(row.closes_at),durationMinutes:Number(row.duration_minutes),status:row.status as Round['status'],closedAt:row.closed_at?asIso(row.closed_at):null,settledAt:row.settled_at?asIso(row.settled_at):null,resultNumber:row.result_number?String(row.result_number):null}}
 async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
@@ -50,12 +51,33 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  if(prior.rows[0]){const row=prior.rows[0];if(String(row.round_id)!==roundId||row.side!==input.side||Number(row.demo_points)!==input.demoPoints)throw new RoundError('idempotency_conflict',409);return {id:row.id,roundId:String(row.round_id),status:row.status,replayed:true}}
  const now=await dbNow(client);
  if(round.status!=='OPEN'||new Date(now)>=new Date(round.closes_at))throw new RoundError('round_closed',409);
- const member=await client.query('UPDATE members SET demo_points=demo_points-$1,updated_at=clock_timestamp() WHERE id=$2 AND status=\'active\' AND demo_points>=$1 RETURNING id',[input.demoPoints,memberId]);
- if(!member.rows[0])throw new RoundError('member_unavailable_or_insufficient_points',409);
+ const gateTable=await client.query("SELECT to_regclass('member_wallet_runtime_state') IS NOT NULL AS present");
+ let walletEnabled=false;if(gateTable.rows[0]?.present){const gate=await client.query('SELECT enabled FROM member_wallet_runtime_state WHERE id=1 FOR SHARE');walletEnabled=gate.rows[0]?.enabled===true}
+ const cutoverVerified=process.env.PAIR_WALLET_CUTOVER_VERIFIED==='true';
+ if(walletEnabled!==cutoverVerified)throw new RoundError('wallet_cutover_gate_mismatch',503);
+ let walletBalance:number|undefined;
+ if(walletEnabled){const member=await client.query("SELECT id FROM members WHERE id=$1 AND status='active'",[memberId]);if(!member.rows[0])throw new RoundError('member_unavailable',403);
+  try{const applied=await applyWalletMutationWithClient(client,{memberId,type:'DEMO_USE',points:input.demoPoints,referenceId:`ROUND_${roundId}_${input.idempotencyKey}`,idempotencyKey:input.idempotencyKey,actor:'round-engine',source:'round'});walletBalance=applied.wallet.availablePoints}catch(error){const code=error instanceof Error?error.message:'';if(code==='INSUFFICIENT_POINTS')throw new RoundError('insufficient_demo_points',409);if(code==='FROZEN')throw new RoundError('wallet_frozen',409);if(code==='NOT_ACTIVATED')throw new RoundError('wallet_not_activated',503);throw error}
+ }else{const member=await client.query('UPDATE members SET demo_points=demo_points-$1,updated_at=clock_timestamp() WHERE id=$2 AND status=\'active\' AND demo_points>=$1 RETURNING id',[input.demoPoints,memberId]);if(!member.rows[0])throw new RoundError('member_unavailable_or_insufficient_points',409)}
  const inserted=await client.query('INSERT INTO round_entries(round_id,member_id,side,demo_points,idempotency_key) VALUES($1,$2,$3,$4,$5) RETURNING id,status',[roundId,memberId,input.side,input.demoPoints,input.idempotencyKey]);
  await client.query("UPDATE rounds SET even_people=even_people+CASE WHEN $2='even' THEN 1 ELSE 0 END,even_points=even_points+CASE WHEN $2='even' THEN $3::int ELSE 0 END,odd_people=odd_people+CASE WHEN $2='odd' THEN 1 ELSE 0 END,odd_points=odd_points+CASE WHEN $2='odd' THEN $3::int ELSE 0 END WHERE id=$1",[roundId,input.side,input.demoPoints]);
  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'member','DEMO_ENTRY_ACCEPTED',jsonb_build_object('entry_id',$2::text))",[roundId,inserted.rows[0].id]);
- return {id:inserted.rows[0].id,roundId,status:'PENDING',replayed:false};
+ return {id:inserted.rows[0].id,roundId,status:'PENDING',replayed:false,walletBalance};
  })}
 export async function roundTotals(roundId:string){const result=await database().query('SELECT even_people,even_points,odd_people,odd_points FROM rounds WHERE id=$1',[roundId]);const row=result.rows[0];return {even:{people:Number(row?.even_people||0),points:Number(row?.even_points||0)},odd:{people:Number(row?.odd_people||0),points:Number(row?.odd_points||0)}}}
 export async function myRoundEntries(memberId:string){return inTransaction(async client=>{await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);const result=await client.query('SELECT id,round_id,side,demo_points,status,created_at FROM round_entries WHERE member_id=$1 ORDER BY created_at DESC LIMIT 100',[memberId]);return result.rows})}
+/** Internal-only refund path. Call after an authorized cancellation; no browser route exposes it. */
+export async function refundCancelledDemoEntry(memberId:string,entryId:string){return inTransaction(async client=>{
+ await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);
+ if(process.env.PAIR_WALLET_CUTOVER_VERIFIED!=='true')throw new RoundError('wallet_cutover_not_verified',503);
+ const identity=await client.query('SELECT round_id FROM round_entries WHERE id=$1 AND member_id=$2',[entryId,memberId]);if(!identity.rows[0])throw new RoundError('entry_not_found',404);
+ const round=await client.query('SELECT id,status FROM rounds WHERE id=$1 FOR UPDATE',[identity.rows[0].round_id]);
+ const found=await client.query('SELECT * FROM round_entries WHERE id=$1 AND member_id=$2 FOR UPDATE',[entryId,memberId]);const entry=found.rows[0];if(!entry)throw new RoundError('entry_not_found',404);
+ if(round.rows[0]?.status!=='CANCELLED'&&entry.status!=='CANCELLED')throw new RoundError('entry_not_cancelled',409);
+ const reference=`ROUND_${entry.round_id}_${entry.idempotency_key}`;
+ const use=await client.query("SELECT id,points FROM member_wallet_ledger WHERE member_id=$1 AND reference_id=$2 AND type='DEMO_USE'",[memberId,reference]);
+ if(!use.rows[0]||Number(use.rows[0].points)!==Number(entry.demo_points))throw new RoundError('original_wallet_use_missing',409);
+ const applied=await applyWalletMutationWithClient(client,{memberId,type:'DEMO_REFUND',points:Number(entry.demo_points),referenceId:`ROUND_REFUND_${entry.id}`,idempotencyKey:entry.id,actor:'round-engine',source:'round'});
+ if(!applied.replayed){await client.query("UPDATE round_entries SET status='CANCELLED' WHERE id=$1 AND member_id=$2",[entryId,memberId]);await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','DEMO_ENTRY_REFUNDED',jsonb_build_object('entry_id',$2::text,'wallet_ledger_id',$3::text))",[entry.round_id,entry.id,applied.entry.id])}
+ return {entryId,replayed:applied.replayed,walletBalance:applied.wallet.availablePoints};
+})}

@@ -1,0 +1,20 @@
+# Member Wallet cutover plan — work 7/8
+
+The wallet source is copied unchanged from `feat/pair-live-member-wallet` commit `425369cad667a53905b079f74fef0dcb34652417`, except `server/postgres.ts` now exposes `applyWalletMutationWithClient` for the existing Round Engine transaction. No branch merge or new wallet service/ledger was created. Public module APIs remain `createMemberWalletModule`, `ensureWallet`, `getWallet`, `getWalletHistory`/`getWalletLedger`, `grantDemoPoints`, `useDemoPoints`, `refundDemoPoints`, and `adjustDemoPoints`.
+
+## Current runtime state
+
+`PAIR_WALLET_CUTOVER_VERIFIED` is unset and `member_wallet_runtime_state.enabled` defaults false. With both off, the existing Round Engine continues to debit only `members.demo_points`; wallet APIs return `wallet_not_activated`. If one gate is on without the other, round submission and wallet reads fail closed. **Do not enable either gate in production in this task.** Once both are enabled, the Round Engine locks the round, verifies server time and idempotency, locks the wallet through the imported module, writes `DEMO_USE` ledger and round entry, and updates balance in one PostgreSQL transaction. It does not update `members.demo_points`. Migration 005 adds a database trigger that forbids legacy balance changes after the database gate is enabled. Wallet row lock and unique `(member_id,idempotency_key)` prevent duplicate debit. The member ID comes from the existing server session, never the request body. A pre-cutover member missing a wallet is rejected by the Wallet read API as needing reconciliation; it is not silently given an empty wallet.
+
+The internal refund path checks a cancelled entry/round and its matching original `DEMO_USE` ledger row, then writes one `DEMO_REFUND` with the entry UUID as idempotency key and an audit row in the same transaction. It is not exposed through a browser API. Admin grant/adjustment is likewise unavailable until Admin Auth and CSRF are wired.
+
+## Controlled migration runbook (not executed)
+
+1. Schedule maintenance and stop the Round Worker and entry writes. Record current `round_entries` and `members.demo_points` counts and totals; take a database backup.
+2. Apply the imported `modules/member-wallet/migrations/001_member_wallet.sql` and Core `migrations/005_wallet_round_integration.sql` with a migration role. Both gates remain off.
+3. In a controlled database transaction, lock members in stable ID order. For each member create one wallet under the same internal member UUID, copy the legacy `demo_points` balance and append one `DEMO_GRANT` opening ledger entry when the amount is positive. Use deterministic `CUTOVER_<member UUID>` references and unique idempotency keys. Record a `CUTOVER` wallet audit row. Do not infer identity from LINE/WeChat profile names or images.
+4. Compare every wallet balance with its legacy source and compare system totals. Confirm one wallet per member, one opening ledger per positive balance, no duplicate keys, no negative or overflow values, and no incomplete transactions. Verify existing entry history separately. Halt on any difference.
+5. Deploy code that includes the shared transaction path, run PostgreSQL transaction/concurrency/injection tests against the migrated schema and a private runtime role, then enable the database gate and `PAIR_WALLET_CUTOVER_VERIFIED` together in a supervised maintenance window. Keep entry writes paused until both gates agree. The database trigger must then reject a trial legacy balance update; roll back that trial.
+6. Resume entry writes, verify balance/ledger/entry consistency, and monitor errors. Reconciliation must be repeated before declaring production ready. Disabling either gate after cutover intentionally blocks writes; do not silently return to legacy debit.
+
+No `DATABASE_URL`, migration role, real PostgreSQL, or production deployment was available here. Reconciliation, actual atomic rollback, concurrent requests, RLS under the deployed role, and LINE/WeChat account return are **NOT TESTED**. The imported module's fake tests and local UI demo do not prove database transaction behavior.
