@@ -1,0 +1,23 @@
+# PAIR LIVE streaming (work 4/8)
+
+## Architecture and provider
+
+The selected adapter is **LiveKit**, an SFU/relay. An admin phone sends one silent 720p/15 FPS video track to a LiveKit room; each authenticated member subscribes through the SFU. This avoids one phone-to-every-viewer WebRTC connections. LiveKit supplies WebRTC signaling, reconnect behavior and relay infrastructure. `lib/stream/livekit.ts` implements the provider boundary, so the SFU can be replaced. LiveKit Cloud or a self-hosted LiveKit deployment can supply the room; neither is configured in this environment. Self-hosted operation also requires public HTTPS/WSS, reachable UDP/TURN routes and a supervised LiveKit server. A managed LiveKit service reduces operations but has a separate usage bill.
+
+The phone requests `facingMode: environment`, 1280×720 ideal, 15 FPS and no audio. If that is unsupported, the browser retries at 640×360. Camera controls in the development admin view open, preview, switch, start a **same-tab DEMO transport**, and stop/release tracks. The DEMO transport never claims to reach other users. In production, the member player polls stream status, receives a short-lived viewer token only after authenticated session checks, and connects to LiveKit with subscribe-only permission. It displays LIVE only after an actual remote video track is subscribed; disconnects show CONNECTING or OFFLINE and retry on reconnect. Stream state does not change round status or results. It remains available when rounds close or enter SCANNING.
+
+## Security boundary
+
+There is no verified admin role yet. `POST /api/stream/publisher` returns 403 unconditionally; the publisher token signer exists only behind the server adapter for future admin authorization. Do **not** expose this signer or enable its route until a server-side admin role and CSRF check are implemented. `POST /api/stream/viewer` requires a verified member session, same-origin request, configured LiveKit, and an active publisher video track. Viewer tokens cannot publish, publisher tokens cannot subscribe, and both have a five-minute expiry. The fixed publisher identity allows at most one connected publisher per room through LiveKit's identity replacement behavior. Do not store LiveKit API secrets in client code. Video is not recorded automatically. Evidence capture and OCR belong to later work.
+
+## Configuration and operation
+
+Set `LIVEKIT_URL` (WSS URL), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and optional `LIVEKIT_ROOM` on the server. Member authentication from work 2 and HTTPS are also required. The SFU must be reachable by the browser through the deployed network and relay ports. Open the admin DEMO page with `/?view=admin` during `npm run dev` to exercise a device camera. Tap **เปิดกล้อง** and grant camera permission, then **เริ่มถ่ายทอด DEMO**; **หยุดและปิดกล้อง** stops every track. The real publisher route remains blocked until admin authentication is implemented. Members enter through LINE/WeChat OA as described in `docs/member-auth.md` and receive viewer tokens after login. On network loss, the demo controls show an error; the real player polls status and LiveKit reconnects. Mobile in-app browsers must support `getUserMedia`/WebRTC and must permit camera access. Some versions require opening an external browser; verify on actual target devices.
+
+## Cost estimate and limits
+
+Illustrative assumption: a 720p/15 FPS feed uses **0.8–1.5 Mbps**. That is roughly **0.36–0.68 GB per viewer-hour** of outbound traffic. At 100 simultaneous viewers for one hour, egress is about **36–68 GB**, plus the single publisher feed and SFU overhead. If a hosting plan charged an illustrative **US$0.05–0.12 per GB**, that range would imply about **US$1.80–8.16 per 100-viewer hour** of egress, plus server/managed-service and TURN costs. These are planning assumptions, not a LiveKit price quote or a claim of unlimited free service. Measure actual bitrate, geography, viewer hours and the chosen provider's current pricing before deployment. Cloudflare Stream's delivery model and latency characteristics need a separate product fit check; it was not selected for low-latency WebRTC participation here.
+
+## Validation status
+
+Unit tests cover token grants/expiry, camera constraints/fallback, track release and the in-tab mock transport. Browser tests can verify permission denial and fake camera behavior. Real mobile camera, real LiveKit SFU, multi-viewer fanout, provider credentials and external network paths were unavailable in this task and remain NOT TESTED. The member page continues to show DEMO CAMERA unless an authenticated member session and configured, active LiveKit stream exist.
