@@ -1,0 +1,1 @@
+export {createPostgresWalletStore} from './postgres';
