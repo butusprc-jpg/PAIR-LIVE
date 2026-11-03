@@ -1,0 +1,2 @@
+export function bangkokDate(value:string){return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bangkok',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value))}
+export function aggregateEntries(entries:{memberId:string;side:'even'|'odd';points:number;status:string}[]){const side=(name:'even'|'odd')=>{const rows=entries.filter(e=>e.side===name&&e.status!=='CANCELLED');return {uniqueMembers:new Set(rows.map(e=>e.memberId)).size,entries:rows.length,demoPoints:rows.reduce((sum,e)=>sum+e.points,0)}};return {even:side('even'),odd:side('odd')}}

@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile,mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {FakeEvidenceStorage,LocalEvidenceStorage,MAX_EVIDENCE_BYTES,storeEvidence,validatePng} from '../lib/ocr/evidence';
+import {aggregateEntries,bangkokDate} from '../lib/evidence/statistics';
+import type {OcrReading} from '../lib/ocr/core';
+const fixture=()=>readFile(join(process.cwd(),'tests/fixtures/scale/136.20.png'));
+test('PNG evidence is content-addressed and deduplicated in fake storage',async()=>{const image=await fixture(),sha=createHash('sha256').update(image).digest('hex'),storage=new FakeEvidenceStorage();const reading:OcrReading={frame:{id:'frame-1',roundId:'1',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:640,height:240,healthy:true},rawText:'136.20',normalizedText:'136.20',confidence:95,blurScore:2,glareFraction:0,crop:image};const first=await storeEvidence(reading,storage),again=await storeEvidence(reading,storage);assert.equal(first.originalSha256,sha);assert.equal(first.originalKey,again.originalKey);assert.deepEqual(await storage.get(first.originalKey),image);await assert.rejects(storage.putImmutable(first.originalKey,Buffer.from('different')),/invalid_evidence/)});
+test('local storage writes once and verifies bytes on read',async()=>{const root=await mkdtemp(join(tmpdir(),'pair-evidence-'));try{const image=await fixture(),key=`${validatePng(image)}.png`,storage=new LocalEvidenceStorage(root);await storage.putImmutable(key,image);await storage.putImmutable(key,image);assert.deepEqual(await storage.get(key),image);await assert.rejects(storage.putImmutable('bad.png',image),/invalid_evidence_key/)}finally{await rm(root,{recursive:true,force:true})}});
+test('non-PNG and oversized evidence are rejected',async()=>{assert.throws(()=>validatePng(Buffer.from('not a PNG')),/invalid_evidence_size|invalid_evidence_png/);assert.throws(()=>validatePng(Buffer.alloc(MAX_EVIDENCE_BYTES+1)),/invalid_evidence_size/)});
+test('counts distinct members separately from entries and sums demo points',()=>{const entries=[{memberId:'A',side:'even' as const,points:10,status:'PENDING'},{memberId:'A',side:'even' as const,points:20,status:'PENDING'},{memberId:'B',side:'even' as const,points:30,status:'PENDING'},{memberId:'C',side:'odd' as const,points:40,status:'PENDING'},{memberId:'D',side:'odd' as const,points:100,status:'CANCELLED'}];assert.deepEqual(aggregateEntries(entries),{even:{uniqueMembers:2,entries:3,demoPoints:60},odd:{uniqueMembers:1,entries:1,demoPoints:40}})});
+test('round date uses Asia/Bangkok',()=>assert.equal(bangkokDate('2026-11-03T18:00:00.000Z'),'2026-11-04'));
