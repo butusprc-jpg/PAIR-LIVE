@@ -57,6 +57,19 @@ export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch
  }
  return {sent,retry,failed};
 }
+async function sendWithdrawalAck(to:string,text:string,retryId:string,replyToken?:string,fetcher:typeof fetch=fetch){
+ const token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
+ if(replyToken&&token){
+  try{
+   const res=await fetcher('https://api.line.me/v2/bot/message/reply',{
+    method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify({replyToken,messages:[{type:'text',text}]}),signal:AbortSignal.timeout(6000)});
+   if(res.ok)return;
+   console.warn('withdraw_reply_status',res.status);
+  }catch(err){console.warn('withdraw_reply_error',err instanceof Error?err.name:'unknown')}
+ }
+ await pushLine(to,[{type:'text',text}],retryId,fetcher);
+}
 export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:string;userId:string;data:string;replyToken?:string},opts:{fetch?:typeof fetch;allowlist?:string}={}){
  const match=/^withdraw:v1:(transfer|reject):([0-9a-f-]{36})$/i.exec(event.data);
  if(!match)return {result:'INVALID'};
