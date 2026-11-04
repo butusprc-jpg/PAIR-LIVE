@@ -52,32 +52,32 @@ New forward-only migration: `migrations/010_manual_topups.sql`, appended after a
 
 ## Validation status
 
-Local: `npm test` passed 67, failed 0, skipped 4 database-dependent tests; `npm run build` passed. The test command uses `node --import tsx --test` to avoid tsx CLI IPC socket issues while preserving the same test files. Local HTTP unauthenticated admin/member and cross-origin checks are recorded in the delivery report.
+Local: `npm test` passed 67, failed 0, skipped 4 database-dependent tests; `npm run build` passed. The test command uses `node --import tsx --test` to avoid tsx CLI IPC socket issues while preserving the same test files. Local HTTP checks passed: GET/POST admin topups and QR returned 403 without authentication (4 checks); GET member topups and QR returned 401 without a session (2 checks); cross-origin member submit returned 403 (1 check). Member QR/status/balance refresh every 30 seconds and on focus, using no-store image URLs.
 
-Local PostgreSQL integration/concurrency: BLOCKED. This managed executor has only uid 0 mapped; PostgreSQL requires a non-root process, and changing users/user namespace is unavailable. No production fallback was attempted. Integration coverage is committed and CI provisions isolated PostgreSQL 16. Do not treat skipped tests as passes. CI result will be reported separately after push.
+Local PostgreSQL integration/concurrency: BLOCKED. This managed executor has only uid 0 mapped; PostgreSQL requires a non-root process, and changing users/user namespace is unavailable. No production fallback was attempted. Integration coverage is committed and CI provisions isolated PostgreSQL 16. Do not treat skipped tests as passes. CI run 41780686612 passed the new PostgreSQL topup integration test, schema/migration integration and existing wallet integration. The full suite initially failed because the runner lacked ImageMagick for existing OCR tests; the workflow now installs ImageMagick and Tesseract. Final full CI results are linked in the delivery report. The topup test submitted one key 8 times (one request), approved it concurrently 12 times across two admin IDs (balance 100 → 150 once, one audit, no new-wallet write), replayed the result, rejected terminal reversals, injected audit failure (balance and PENDING status rolled back), rejected suspended members/invalid points/unknown admin, tested other-member isolation, RLS under a non-owner role, immutable audit/terminal status and unchanged LEGACY gates.
 
 NOT TESTED live: LINE login/LIFF roundtrip, private S3 credentials/ACL and real upload/download, two real administrator browsers, refresh/network interruption in real browsers, Neon test deployment, production. No test used actual member identities or slips.
 
 ## Changed files
 
-app/admin/page.tsx
-app/page.tsx
-lib/member-entry.ts
-lib/migration-manifest.ts
-lib/schema-tables.ts
-package-lock.json
-package.json
-tests/member-entry.test.ts
-tests/migration-runner.test.ts
-.github/workflows/manual-topup-tests.yml
-app/api/admin/topup-qr/route.ts
-app/api/admin/topups/route.ts
-app/api/member/topup-qr/route.ts
-app/api/member/topups/route.ts
-components/Topup.tsx
-docs/manual-topups-v1.2.md
-lib/topup/http.ts
-lib/topup/qr.ts
-lib/topup/store.ts
-migrations/010_manual_topups.sql
-tests/topup.test.ts
+- `app/admin/page.tsx`
+- `app/page.tsx`
+- `lib/member-entry.ts`
+- `lib/migration-manifest.ts`
+- `lib/schema-tables.ts`
+- `package-lock.json`
+- `package.json`
+- `tests/member-entry.test.ts`
+- `tests/migration-runner.test.ts`
+- `.github/workflows/manual-topup-tests.yml`
+- `app/api/admin/topup-qr/route.ts`
+- `app/api/admin/topups/route.ts`
+- `app/api/member/topup-qr/route.ts`
+- `app/api/member/topups/route.ts`
+- `components/Topup.tsx`
+- `docs/manual-topups-v1.2.md`
+- `lib/topup/http.ts`
+- `lib/topup/qr.ts`
+- `lib/topup/store.ts`
+- `migrations/010_manual_topups.sql`
+- `tests/topup.test.ts`

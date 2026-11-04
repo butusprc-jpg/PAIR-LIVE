@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   topup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -30,6 +30,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Install existing OCR test dependencies
+        run: sudo apt-get update && sudo apt-get install -y imagemagick tesseract-ocr
       - run: npm ci
       - name: Install and validate isolated test schema
         run: |
