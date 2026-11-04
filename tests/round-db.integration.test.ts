@@ -4,7 +4,8 @@ import {randomUUID} from 'node:crypto';
 import {database} from '../lib/server/db';
 import {currentRound,myRoundEntries,roundTotals,submitDemoEntry,tickRoundEngine,updateDurationForNextRound} from '../lib/rounds/store';
 import {RoundError} from '../lib/rounds/core';
-test('PostgreSQL round lifecycle, idempotency, ownership, restart and no result generation', {skip:!process.env.DATABASE_URL}, async()=>{
+test('PostgreSQL round lifecycle, idempotency, ownership, restart and no result generation', {skip:!process.env.DATABASE_URL||process.env.PAIR_ROUND_TEST_ISOLATED!=='1'}, async()=>{
+ const {assertTestTarget}=await import('../lib/migration-manifest'); assertTestTarget(process.env.DATABASE_URL);
  const db=database();
  const a=(await db.query("INSERT INTO members(display_name) VALUES('Test A') RETURNING id")).rows[0].id as string;
  const b=(await db.query("INSERT INTO members(display_name) VALUES('Test B') RETURNING id")).rows[0].id as string;
@@ -30,5 +31,5 @@ test('PostgreSQL round lifecycle, idempotency, ownership, restart and no result 
   const resumed=await tickRoundEngine();assert.equal(resumed.round?.id,roundId);assert.equal(resumed.round?.status,'SCANNING');assert.equal(resumed.round?.resultNumber,null);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM rounds')).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM round_audit_logs WHERE action='ROUND_OPENED'")).rows[0].n,1);
- }finally{if(roundId){const cleanup=await db.connect();try{await cleanup.query('BEGIN');await cleanup.query("SELECT set_config('pair_live.member_id',$1,true)",[a]);await cleanup.query('DELETE FROM round_entries WHERE round_id=$1',[roundId]);await cleanup.query('DELETE FROM round_audit_logs WHERE round_id=$1',[roundId]);await cleanup.query('DELETE FROM rounds WHERE id=$1',[roundId]);await cleanup.query('UPDATE round_settings SET duration_minutes=5 WHERE id=1');await cleanup.query('COMMIT')}catch(error){await cleanup.query('ROLLBACK');throw error}finally{cleanup.release()}}await db.query('DELETE FROM members WHERE id IN ($1,$2)',[a,b]);await db.end()}
+ }finally{await db.end()}
 });
