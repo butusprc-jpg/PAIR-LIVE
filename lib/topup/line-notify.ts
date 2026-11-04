@@ -1,5 +1,7 @@
 import type {Pool} from 'pg';
-import {createLineAdminAdapter} from '../../modules/report-notification/server/line-admin-adapter';
+import {getSlip} from './slip';
+import {requestCard,signedSlipUrl} from './line-card';
+import {providerPairConfigured,pushLine} from './line-provider';
 
 // Users in the admin allowlist are selected server-side only. LINE Login and
 // Messaging API must share the same LINE provider, and the admin must be an OA friend.
@@ -12,15 +14,15 @@ export function lineAdminRecipients(raw:string|undefined):string[]{
  }catch{return []}
 }
 export type LineNotifyOutcome={configured:boolean;sent:number;pending:number;failed:number};
-type QueueRow={id:string;request_id:string;recipient_user_id:string;requested_points:number;display_name:string;has_slip:boolean;attempts:number};
+type QueueRow={id:string;request_id:string;recipient_user_id:string;requested_points:number;display_name:string;created_at:Date;status:string;has_slip:boolean;attempts:number};
 async function scoped<T>(pool:Pool,action:(client:import('pg').PoolClient)=>Promise<T>):Promise<T>{
  const c=await pool.connect();
  try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const v=await action(c);await c.query('COMMIT');return v}
  catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
-export async function dispatchTopupLine(pool:Pool,opts:{token?:string;fetch?:typeof fetch;origin?:string}={}):Promise<LineNotifyOutcome>{
+export async function dispatchTopupLine(pool:Pool,opts:{token?:string;fetch?:typeof fetch;origin?:string;loadSlip?:(id:string)=>Promise<{data:Buffer;type:string}>}={}):Promise<LineNotifyOutcome>{
  const token=opts.token??process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
- if(!token)return {configured:false,sent:0,pending:0,failed:0};
+ if(!token||!providerPairConfigured())return {configured:false,sent:0,pending:0,failed:0};
  // Every claim receives a stable UUID retry key. A 40s lease survives a crashed function.
  const rows=await scoped(pool,async c=>(await c.query<QueueRow>(`
  WITH candidate AS (
@@ -36,18 +38,26 @@ export async function dispatchTopupLine(pool:Pool,opts:{token?:string;fetch?:typ
    FROM candidate WHERE n.id=candidate.id RETURNING n.*
  )
  SELECT n.id,n.request_id,n.recipient_user_id,n.attempts,r.requested_points,
-  m.display_name,(r.slip_object_key IS NOT NULL) AS has_slip
+  m.display_name,r.created_at,r.status,(r.slip_object_key IS NOT NULL) AS has_slip
  FROM claimed n JOIN member_topup_requests r ON r.id=n.request_id
  JOIN members m ON m.id=n.member_id
  `)).rows);
- const adapter=createLineAdminAdapter({channelAccessToken:token,fetch:opts.fetch,timeoutMs:8000});
  let sent=0,pending=0,failed=0;
  const origin=(opts.origin??process.env.NEXT_PUBLIC_APP_BASE_URL??'https://pair-live.vercel.app').replace(/\/$/,'');
  for(const row of rows){
-  // Short, non-sensitive notification; the slip is viewed only via authenticated admin API.
-  const name=row.display_name.replace(/[\r\n]/g,' ').slice(0,80);
-  const content={text:`🔔 PAIR LIVE · เติมแต้มรอตรวจสอบ\nสมาชิก: ${name}\nจำนวน: ${row.requested_points.toLocaleString('th-TH')} แต้ม\nสลิป: ${row.has_slip?'แนบแล้ว':'ไม่มีสลิป'}\nเลขคำขอ: ${row.request_id}\nตรวจและอนุมัติ: ${origin}/admin`};
-  const result=await adapter.send({id:row.id,address:row.recipient_user_id} as Parameters<ReturnType<typeof createLineAdminAdapter>['send']>[0],content);
+  const rowData={id:row.request_id,displayName:row.display_name,points:row.requested_points,createdAt:row.created_at,status:'รอตรวจสอบ'};
+  let slipUrl:string|undefined;
+  if(row.has_slip){
+   try{
+    // Read and verify the R2 object before advertising a fetchable image.
+    const slip=await (opts.loadSlip??((id:string)=>getSlip(pool,id)))(row.request_id);
+    if(slip.data.length>2*1024*1024||!['image/png','image/jpeg','image/webp'].includes(slip.type))throw Error('slip_invalid');
+    slipUrl=signedSlipUrl(origin,row.request_id);
+   }catch{slipUrl=undefined}
+  }
+  let result:{status:'ACCEPTED'|'TEMPORARY_ERROR'|'PERMANENT_ERROR';code?:string;retryAfterMs?:number};
+  try{await pushLine(row.recipient_user_id,[requestCard(rowData,slipUrl)],row.id,opts.fetch,token);result={status:'ACCEPTED'}}
+  catch(e){result={status:e instanceof Error&&'status' in e&&(e as {status:number}).status===422?'PERMANENT_ERROR':'TEMPORARY_ERROR',code:e instanceof Error?e.message:'line_transport'}}
   let status:'SENT'|'RETRY'|'FAILED';
   if(result.status==='ACCEPTED'){status='SENT';sent++}
   else if(result.status==='TEMPORARY_ERROR'&&row.attempts<5){status='RETRY';pending++}
@@ -56,7 +66,7 @@ export async function dispatchTopupLine(pool:Pool,opts:{token?:string;fetch?:typ
   await scoped(pool,async c=>{await c.query(`UPDATE member_topup_line_notifications SET status=$2,lease_until=NULL,
    next_attempt_at=now()+($3::integer*interval '1 second'),sent_at=CASE WHEN $2='SENT' THEN now() ELSE NULL END,
    last_error=$4,updated_at=now()
-   WHERE id=$1 AND status='PROCESSING' AND attempts=$5`,[row.id,status,backoff,status==='SENT'?null:result.code||result.status,row.attempts])});
+   WHERE id=$1 AND status='PROCESSING' AND attempts=$5`,[row.id,status,backoff,status==='SENT'?(row.has_slip&&!slipUrl?'slip_image_unavailable':null):result.code||result.status,row.attempts])});
  }
  return {configured:true,sent,pending,failed};
 }

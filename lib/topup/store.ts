@@ -31,11 +31,11 @@ export function listTopups(pool:Pool,memberId:string|null,search='',status=''){i
 export function decideTopup(pool:Pool,adminId:string,id:unknown,action:unknown,note:unknown){if(!uuid(id)||!['APPROVED','REJECTED'].includes(String(action))||typeof note!=='string'||note.length>1000)throw new TopupError('invalid_decision');return transaction(pool,null,async c=>{
  const admin=await c.query("SELECT id FROM admin_identities WHERE id=$1 AND status='active' FOR SHARE",[adminId]);if(!admin.rowCount)throw new TopupError('admin_forbidden',403);
  const r=(await c.query('SELECT * FROM member_topup_requests WHERE id=$1 FOR UPDATE',[id])).rows[0];if(!r)throw new TopupError('not_found',404);
- if(r.status!== 'PENDING'){if(r.status===action)return r;throw new TopupError('terminal_status',409)}
+ if(r.status!== 'PENDING'){if(r.status===action)return {...r,replayed:true};throw new TopupError('terminal_status',409)}
  if(await walletPathFromDatabase(c)!=='legacy')throw new TopupError('legacy_required',409);
  const m=(await c.query('SELECT status,demo_points FROM members WHERE id=$1 FOR UPDATE',[r.member_id])).rows[0];if(!m||action==='APPROVED'&&m.status!=='active')throw new TopupError('member_suspended',403);if(action==='APPROVED')validatePoints(r.requested_points);
  const before=m.demo_points;const after=action==='APPROVED'?before+r.requested_points:before;if(!Number.isSafeInteger(after)||after>2147483647)throw new TopupError('balance_overflow',409);
  if(action==='APPROVED')await c.query('UPDATE members SET demo_points=$1,updated_at=now() WHERE id=$2',[after,r.member_id]);
  await c.query('INSERT INTO member_topup_audit(request_id,member_id,admin_id,action,points,balance_before,balance_after,admin_note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,r.member_id,adminId,action,r.requested_points,before,after,note]);
- const field=action==='APPROVED'?'approved':'rejected';return (await c.query(`UPDATE member_topup_requests SET status=$1,${field}_by=$2,${field}_at=now(),admin_note=$3 WHERE id=$4 RETURNING *`,[action,adminId,note,id])).rows[0];
+ const field=action==='APPROVED'?'approved':'rejected';return {...(await c.query(`UPDATE member_topup_requests SET status=$1,${field}_by=$2,${field}_at=now(),admin_note=$3 WHERE id=$4 RETURNING *`,[action,adminId,note,id])).rows[0],replayed:false};
  })}
