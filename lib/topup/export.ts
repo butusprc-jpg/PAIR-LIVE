@@ -24,12 +24,12 @@ export function csvRow(r:Record<string,unknown>){const created=new Date(String(r
 const where=`($1::timestamptz IS NULL OR r.created_at >= $1) AND ($2::timestamptz IS NULL OR r.created_at < $2) AND ($3::text IS NULL OR r.status=$3) AND ($4::text IS NULL OR r.id::text=$4 OR m.display_name ILIKE '%'||$4||'%')`;
 function args(f:HistoryFilter){return [f.from||null,f.to||null,f.status||null,f.search||null]}
 export async function historySummary(pool:Pool,f:HistoryFilter){const c=await pool.connect();try{await c.query('BEGIN READ ONLY');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const r=await c.query(`SELECT count(*)::integer AS count,COALESCE(sum(r.requested_points),0)::text AS points FROM member_topup_requests r JOIN members m ON m.id=r.member_id WHERE ${where}`,args(f));await c.query('COMMIT');return r.rows[0]}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}
-export function historyCsv(pool:Pool,f:HistoryFilter){const encoder=new TextEncoder();let c:import('pg').PoolClient|undefined;let cursorDate:Date|null=null,cursorId:string|null=null,done=false,first=true;
+export function historyCsv(pool:Pool,f:HistoryFilter){const encoder=new TextEncoder();let c:import('pg').PoolClient|undefined;let offset=0,done=false,first=true;
  return new ReadableStream<Uint8Array>({async pull(controller){try{
   if(first){c=await pool.connect();await c.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");controller.enqueue(encoder.encode('\uFEFFDate,Time,Request ID,Member ID,Member Name,Points,Status,Approved By,Approved At,Note\r\n'));first=false;return}
-  const rows=await c!.query(`SELECT r.id,r.member_id,m.display_name,r.requested_points,r.status,r.created_at,r.approved_at,r.admin_note,COALESCE(a.display_name,a.id::text) AS approved_by FROM member_topup_requests r JOIN members m ON m.id=r.member_id LEFT JOIN admin_identities a ON a.id=r.approved_by WHERE ${where} AND ($5::timestamptz IS NULL OR (r.created_at,r.id)>($5::timestamptz,$6::uuid)) ORDER BY r.created_at,r.id LIMIT 250`,[...args(f),cursorDate,cursorId]);
+  const rows=await c!.query(`SELECT r.id,r.member_id,m.display_name,r.requested_points,r.status,r.created_at,r.approved_at,r.admin_note,COALESCE(a.display_name,a.id::text) AS approved_by FROM member_topup_requests r JOIN members m ON m.id=r.member_id LEFT JOIN admin_identities a ON a.id=r.approved_by WHERE ${where} ORDER BY r.created_at,r.id LIMIT 250 OFFSET $5`,[...args(f),offset]);
   if(!rows.rows.length){done=true;await c!.query('COMMIT');c!.release();c=undefined;controller.close();return}
-  const last=rows.rows.at(-1);cursorDate=last.created_at;cursorId=last.id;
+  offset+=rows.rows.length;
   controller.enqueue(encoder.encode(rows.rows.map(csvRow).join('')));
  }catch(e){if(c){try{await c.query('ROLLBACK')}catch{}c.release();c=undefined}controller.error(e)}},async cancel(){if(c&&!done){try{await c.query('ROLLBACK')}catch{}c.release();c=undefined}}});
 }
