@@ -15,8 +15,8 @@ export function MemberWallet({wallet,onHistory,loading=false,error=null}:MemberW
  <div className={styles.split}><div><span>แต้มพร้อมใช้</span><strong>{fmt(wallet.availablePoints)}</strong></div><div><span>แต้มที่พักไว้</span><strong>{fmt(wallet.reservedPoints)}</strong></div></div>
  <button type="button" className={styles.historyButton} onClick={onHistory} disabled={!onHistory}>ดูประวัติแต้ม <span aria-hidden="true">→</span></button>
  <div className={styles.actions}><button type="button" onClick={()=>setPanel('grant')}>เติมแต้ม <small>DEMO</small></button><button type="button" onClick={()=>setPanel('withdraw')}>ถอนแต้ม <small>ส่งคำขอ</small></button></div>
- <p className={styles.notice}>เมื่อส่งคำขอถอน ระบบจะกันแต้มไว้ และแอดมินยืนยันเมื่อโอนแต้มเสร็จ</p>
+ <p className={styles.notice}>เมื่อส่งคำขอถอน ระบบจะกันแต้มไว้ และแอดมินยืนยันเมื่อจ่ายแต้มเสร็จ</p>
  </>:!loading?<p className={styles.empty}>ยังไม่พบข้อมูลกระเป๋าแต้มของบัญชีนี้</p>:null}
- {panel&&<div className={styles.backdrop} onClick={()=>setPanel(null)}><section className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="wallet-dialog-title" onClick={e=>e.stopPropagation()}><button type="button" className={styles.close} aria-label="ปิด" onClick={()=>setPanel(null)}>×</button>{panel==='grant'?<><h2 id="wallet-dialog-title">เติมแต้ม DEMO</h2><p>ระบบรับสลิปจริงยังไม่เปิดใช้ ปุ่มนี้เป็นเพียงตัวอย่างและไม่เพิ่มยอดแต้ม</p><p className={styles.notice}>แต้มสาธิตไม่มีมูลค่าเงินจริง</p></>:<MemberWithdraw/>}</section></div>}
+ {panel&&<div className={styles.backdrop} onClick={()=>setPanel(null)}><section className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="wallet-dialog-title" onClick={e=>e.stopPropagation()}><button type="button" className={styles.close} aria-label="ปิด" onClick={()=>setPanel(null)}>×</button>{panel==='grant'?<><h2 id="wallet-dialog-title">เติมแต้ม DEMO</h2><p>ระบบรับสลิปจริงยังไม่เปิดใช้ ปุ่มนี้เป็นเพียงตัวอย่างและไม่เพิ่มยอดแต้ม</p><p className={styles.notice}>รายการนี้เป็นแต้มสาธิต</p></>:<MemberWithdraw/>}</section></div>}
  </section>;
 }
