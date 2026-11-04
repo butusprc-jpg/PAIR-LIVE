@@ -64,7 +64,8 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
  if(!admin){console.error('withdraw_admin_not_verified');return {result:'FORBIDDEN'}};
  // Request-level locks and the immutable unique audit are authoritative against replay.
  const decision=match[1]==='transfer'?'TRANSFERRED':'REJECTED';
- const row=await decideWithdrawal(pool,admin.id,match[2],decision);
+ let row:Awaited<ReturnType<typeof decideWithdrawal>>;
+ try{row=await decideWithdrawal(pool,admin.id,match[2],decision)}catch(error){console.error('withdraw_decision_failed',error instanceof Error?error.message:'unknown');try{await pushLine(event.userId,[{type:'text',text:'ยืนยันถอนแต้มไม่สำเร็จ กรุณาตรวจรายการล่าสุด'}],event.webhookEventId+':error',opts.fetch)}catch{}throw error}
  await scoped(pool,c=>c.query('INSERT INTO member_withdrawal_postbacks(event_id,request_id,result) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[event.webhookEventId,row.id,row.status]));
  try{await dispatchWithdrawalLine(pool,{fetch:opts.fetch})}catch{/* Persisted notifications remain retryable. */}
  const message={type:'text',text:row.replayed?
