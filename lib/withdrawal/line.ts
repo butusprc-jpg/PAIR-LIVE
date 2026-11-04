@@ -80,7 +80,7 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
  const decision=match[1]==='transfer'?'TRANSFERRED':'REJECTED';
  let row:Awaited<ReturnType<typeof decideWithdrawal>>;
  try{row=await decideWithdrawal(pool,admin.id,match[2],decision)}catch(error){console.error('withdraw_decision_failed',error instanceof Error?error.message:'unknown');try{await pushLine(event.userId,[{type:'text',text:'ยืนยันถอนแต้มไม่สำเร็จ กรุณาตรวจรายการล่าสุด'}],event.webhookEventId+':error',opts.fetch)}catch{}throw error}
- await scoped(pool,c=>c.query('INSERT INTO member_withdrawal_postbacks(event_id,request_id,result) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[event.webhookEventId,row.id,row.status]));
+ await scoped(pool,async c=>{await c.query('INSERT INTO member_withdrawal_postbacks(event_id,request_id,result) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[event.webhookEventId,row.id,row.status]);await c.query("UPDATE line_webhook_events SET processing_status='PROCESSED',processed_at=now() WHERE event_id=$1",[event.webhookEventId]);});
  const message={type:'text',text:row.replayed?
   `รายการนี้ดำเนินการแล้ว · ${row.status} · ${row.requested_points} แต้ม`:
   row.status==='TRANSFERRED'?`✅ ยืนยันจ่ายแต้มแล้ว · ${row.requested_points} แต้ม`:`❌ ปฏิเสธและคืน ${row.requested_points} แต้มแล้ว`};
