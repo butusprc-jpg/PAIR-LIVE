@@ -45,7 +45,7 @@ function card(row:CardRow,title:string,bodyExtra:unknown[]=[],footer:unknown[]=[
   body:{type:'box',layout:'vertical',spacing:'md',contents:[{type:'text',text:'PAIR LIVE — '+title,weight:'bold',size:'lg',wrap:true},label('สมาชิก',name),label('จำนวนเติม',`${row.points.toLocaleString('th-TH')} แต้ม`),label('ส่งเมื่อ',when),label('เลขคำขอ',row.id),label('สถานะ',row.status),...bodyExtra]},
   ...(footer.length?{footer:{type:'box',layout:'vertical',spacing:'sm',contents:footer}}:{})}};
 }
-function button(text:string,data:string,style:'primary'|'secondary'='secondary'){return {type:'button',style,...(style==='primary'?{color:'#1763DC'}:{}),height:'sm',action:{type:'postback',label:text,data}}}}
+function button(text:string,data:string,style:'primary'|'secondary'='secondary'){return {type:'button',style,...(style==='primary'?{color:'#1763DC'}:{}),height:'sm',action:{type:'postback',label:text,data}}}
 export function requestCard(row:CardRow,slipUrl?:string,expired=false,manualChatSlip=false){
  const extra=slipUrl?[]:[{type:'text',text:expired?'ภาพหลักฐานในระบบหมดอายุแล้ว ตรวจสอบตามช่องทางที่ได้รับ':'ตรวจหลักฐานตามช่องทางที่ได้รับก่อนดำเนินการ',color:'#737B8C',size:'sm',wrap:true}];
  const footer=[
