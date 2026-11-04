@@ -8,7 +8,7 @@ export function acceptedLineEvents(body:unknown):LineEvent[]{const events=(body 
  const source=e.source as Record<string,unknown>|undefined;
  if(!source||source.type!=='user'||typeof source.userId!=='string'||!source.userId)return [];
  if(e.type==='message'){const message=e.message as Record<string,unknown>|undefined;if(!message||typeof message.id!=='string'||!message.id||typeof message.type!=='string')return []}
- if(e.type==='postback'){const postback=e.postback as Record<string,unknown>|undefined;if(!postback||typeof postback.data!=='string'||postback.data.length>300||!postback.data.startsWith('topup:v2:'))return []}
+ if(e.type==='postback'){const postback=e.postback as Record<string,unknown>|undefined;if(!postback||typeof postback.data!=='string'||postback.data.length>300||!(postback.data.startsWith('topup:v2:')||postback.data.startsWith('withdraw:v1:')))return []}
  return [{webhookEventId:e.webhookEventId,type:e.type as LineEvent['type'],userId:source.userId,data:e.type==='postback'?(e.postback as {data:string}).data:undefined}];
 })}
 export async function handleLineWebhook(request:Request,secret:string|undefined,record:(event:LineEvent)=>Promise<void>):Promise<Response>{
