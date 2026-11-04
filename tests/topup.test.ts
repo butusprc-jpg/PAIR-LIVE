@@ -94,6 +94,16 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.deepEqual([first.result,second.result],['CONFIRM_REQUIRED','CONFIRM_REQUIRED']);
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,100);
   assert.equal(seen.filter(x=>x.to===adminA&&x.text.includes('ตรวจสลิปแล้ว ยืนยัน')).length,1);
+  const flaky=await createTopup(db,chatMember,7,randomUUID());
+  let attempts=0;
+  const retryEvent={webhookEventId:'flaky-review',type:'postback' as const,userId:adminA,data:`topup:v2:review:APPROVED:${flaky.id}`};
+  const retryFetch:typeof fetch=async(_url,init)=>{const payload=JSON.parse(String(init?.body));if(payload.to===adminA&&payload.messages[0].type==='flex'&&++attempts===1)return new Response('',{status:503});return new Response('',{status:200})};
+  await assert.rejects(processTopupPostback(db,retryEvent,{fetch:retryFetch,allowlist:allow}),/line_delivery_failed/);
+  assert.equal((await db.query('SELECT count(*)::int n FROM line_webhook_events WHERE event_id=$1',[retryEvent.webhookEventId])).rows[0].n,0);
+  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_chat_actions WHERE event_id=$1',[retryEvent.webhookEventId])).rows[0].n,0);
+  assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,100);
+  assert.equal((await processTopupPostback(db,retryEvent,{fetch:retryFetch,allowlist:allow})).result,'CONFIRM_REQUIRED');
+  assert.equal(attempts,2);
   const tokenA=confirmationData(pending.id,'APPROVED',adminA);
   const tokenB=confirmationData(pending.id,'APPROVED',adminB);
   const [confirmed,replayed]=await Promise.all([run('confirm-synthetic',adminA,tokenA),run('confirm-synthetic-b',adminB,tokenB)]);
