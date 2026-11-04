@@ -15,7 +15,7 @@ test('Flex card contains real request fields and signed image URL',()=>{
   assert.equal(validSlipLink(randomUUID(),u.searchParams.get('exp')!,u.searchParams.get('sig')!,now),false);
   const card=requestCard(row,url);const json=JSON.stringify(card);for(const value of ['lotus','500','แจ้งเติมแต้ม',id,url,'postback'])assert.ok(json.includes(value),value);
   assert.equal((card.contents as {hero?:unknown}).hero!==undefined,true);
-  const fallback=JSON.stringify(requestCard(row));assert.match(fallback,/ภาพสลิปโหลดไม่ได้/);assert.doesNotMatch(fallback,/topup:v2:review/);
+  const fallback=JSON.stringify(requestCard(row));assert.match(fallback,/รอสลิปจากสมาชิกทางแชต LINE/);assert.doesNotMatch(fallback,/topup:v2:review/);
   const confirm=confirmationCard(row,'APPROVED',actor);assert.match(JSON.stringify(confirm),/ยืนยันการอนุมัติ/);
   const token=confirmationData(id,'APPROVED',actor,now);
   assert.deepEqual(parsePostback(token,actor,now),{stage:'CONFIRM',decision:'APPROVED',id});
