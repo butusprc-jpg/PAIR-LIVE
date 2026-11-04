@@ -22,7 +22,7 @@ export async function listWithdrawals(pool:Pool,memberId:string){
   'SELECT id,requested_points,payout_details,status,created_at FROM member_withdrawal_requests WHERE member_id=$1 ORDER BY created_at DESC LIMIT 30',[memberId])).rows);
 }
 export async function createWithdrawal(pool:Pool,memberId:string,points:unknown,detailsValue:unknown,key:unknown,recipients:string[]){
- validatePoints(points);const details=validateDetails(detailsValue);
+ const count=validatePoints(points);const details=validateDetails(detailsValue);
  if(!uuid(key))throw new TopupError('invalid_idempotency_key');
  if(!recipients.length)throw new TopupError('withdrawal_admin_unavailable',503);
  for(const id of recipients)if(!/^U[0-9a-f]{32}$/i.test(id))throw new TopupError('invalid_line_recipient');
@@ -31,14 +31,14 @@ export async function createWithdrawal(pool:Pool,memberId:string,points:unknown,
   if(member.rows[0]?.status!=='active')throw new TopupError('member_suspended',403);
   const prior=await c.query('SELECT * FROM member_withdrawal_requests WHERE member_id=$1 AND idempotency_key=$2',[memberId,key]);
   if(prior.rows[0]){
-   if(prior.rows[0].requested_points!==points||prior.rows[0].payout_details!==details)throw new TopupError('idempotency_conflict',409);
+   if(prior.rows[0].requested_points!==count||prior.rows[0].payout_details!==details)throw new TopupError('idempotency_conflict',409);
    return {...prior.rows[0],replayed:true};
   }
   if(await walletPathFromDatabase(c)!=='legacy')throw new TopupError('legacy_required',409);
-  if(member.rows[0].demo_points<points)throw new TopupError('withdrawal_insufficient_points',409);
-  const row=(await c.query('INSERT INTO member_withdrawal_requests(member_id,requested_points,payout_details,idempotency_key) VALUES($1,$2,$3,$4) RETURNING *',[memberId,points,details,key])).rows[0];
+  if(member.rows[0].demo_points<count)throw new TopupError('withdrawal_insufficient_points',409);
+  const row=(await c.query('INSERT INTO member_withdrawal_requests(member_id,requested_points,payout_details,idempotency_key) VALUES($1,$2,$3,$4) RETURNING *',[memberId,count,details,key])).rows[0];
   // Hold points before admin's payout, preventing simultaneous over-withdrawals.
-  await c.query('UPDATE members SET demo_points=demo_points-$1,updated_at=now() WHERE id=$2',[points,memberId]);
+  await c.query('UPDATE members SET demo_points=demo_points-$1,updated_at=now() WHERE id=$2',[count,memberId]);
   for(const id of new Set(recipients))await c.query("INSERT INTO member_withdrawal_line_outbox(request_id,recipient_user_id,purpose) VALUES($1,$2,'ADMIN_REQUEST') ON CONFLICT DO NOTHING",[row.id,id]);
   return {...row,replayed:false};
  });
