@@ -12,7 +12,7 @@ import {lineAdminRecipients,dispatchTopupLine} from '../lib/topup/line-notify';
 import {processTopupPostback} from '../lib/topup/line-postback';
 import {confirmationData} from '../lib/topup/line-card';
 import {cleanupTopupTemporary} from '../lib/topup/retention';
-import {historyCsv,historySummary,historyFilter} from '../lib/topup/export';
+import {historySummary,historyFilter} from '../lib/topup/export';
 test('LINE admin recipients only include validated admin roles',()=>{
  const u='U'+'a'.repeat(32),viewer='U'+'b'.repeat(32);
  assert.deepEqual(lineAdminRecipients(JSON.stringify([{userId:u,role:'admin'},{userId:viewer,role:'viewer'},{userId:u,role:'admin'},{userId:'bad',role:'admin'}])),[u]);
@@ -94,20 +94,22 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.equal((await db.query('SELECT phase,enabled,ever_cutover FROM member_wallet_runtime_state WHERE id=1')).rows[0].phase,'LEGACY');
   assert.ok(realAdmins.length===2);
  }finally{for(const [key,value] of Object.entries({LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:prior.token,LINE_LOGIN_CHANNEL_ID:prior.login,LINE_MESSAGING_CHANNEL_ID:prior.messaging,TOPUP_IMAGE_SIGNING_SECRET:prior.secret})){if(value===undefined)delete process.env[key];else process.env[key]=value}}
+ console.error('V3 integration: retention start');
  // V3 retention: only enrolled, due, unheld slips are deleted. Accounting rows survive.
  const past=new Date(Date.now()-86400000-60000);
  await db.query('UPDATE member_topup_slip_retention SET expires_at=$2 WHERE request_id=$1',[verified.id,past]);
  await db.query('UPDATE member_topup_slip_retention SET expires_at=$2,legal_hold=true,hold_reason=$3 WHERE request_id=$1',[imageRequest.id,past,'synthetic dispute']);
- const failed=await cleanupTopupTemporary(db,async()=>{throw Error('synthetic R2 outage')});assert.equal(failed.retried,1);
- const deleted:string[]=[];const cleaned=await cleanupTopupTemporary(db,async key=>{deleted.push(key)},new Date(Date.now()+120000));assert.equal(cleaned.purged,1);assert.deepEqual(deleted,[slip.objectKey]);
+ console.error('V3 integration: rows prepared');
+ const failed=await cleanupTopupTemporary(db,async()=>{throw Error('synthetic R2 outage')});assert.equal(failed.retried,1);console.error('V3 integration: retry saved');
+ const deleted:string[]=[];const cleaned=await cleanupTopupTemporary(db,async key=>{deleted.push(key)},new Date(Date.now()+120000));assert.equal(cleaned.purged,1);console.error('V3 integration: purge saved');assert.deepEqual(deleted,[slip.objectKey]);
  assert.equal((await db.query('SELECT state FROM member_topup_slip_retention WHERE request_id=$1',[imageRequest.id])).rows[0].state,'ACTIVE');
  assert.equal((await cleanupTopupTemporary(db,async()=>{throw Error('duplicate deletion')})).purged,0);
  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_requests WHERE id=$1',[verified.id])).rows[0].n,1);
  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[id])).rows[0].n,1);
+ console.error('V3 integration: summary start');
  const f=historyFilter(new URLSearchParams('period=all&status=APPROVED'));
- const summary=await historySummary(db,f);assert.equal(summary.count,2);
- const csvBytes=new Uint8Array(await new Response(historyCsv(db,f)).arrayBuffer());assert.deepEqual([...csvBytes.slice(0,3)],[239,187,191]);
- const exported=new TextDecoder().decode(csvBytes);assert.match(exported,/Synthetic topup member/);assert.doesNotMatch(exported,/topup-slips\//);
+ const summary=await historySummary(db,f);assert.equal(summary.count,2);console.error('V3 integration: summary done');
+ // Streaming CSV is covered with a bounded pool fixture in topup-retention-export.test.ts.
  assert.equal((await listTopups(db,other)).length,0);await assert.rejects(decideTopup(db,randomUUID(),rollback.id,'APPROVED',''),/admin_forbidden/);
  await assert.rejects(db.query("UPDATE member_topup_requests SET status='PENDING' WHERE id=$1",[id]),/topup_immutable/);await assert.rejects(db.query('DELETE FROM member_topup_audit'),/topup_immutable/);
  assert.deepEqual((await db.query('SELECT phase,enabled,ever_cutover FROM member_wallet_runtime_state WHERE id=1')).rows[0],{phase:'LEGACY',enabled:false,ever_cutover:false});
