@@ -16,21 +16,21 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
  async function submit(){
   if(lock.current)return;lock.current=true;setBusy(true);
   try{
-   if(!valid&&!key.current)throw new Error('กรุณากรอกข้อมูลรับโอนและแต้มไม่เกินยอดคงเหลือ');
+   if(!valid&&!key.current)throw new Error('กรุณากรอกข้อมูลรับแต้มและแต้มไม่เกินยอดคงเหลือ');
    const current={points:quantity,details:details.trim()};
    if(key.current&&(pending.current?.points!==current.points||pending.current?.details!==current.details))
-    throw new Error('กรุณาตรวจคำขอเดิมก่อนแก้ไขจำนวนหรือข้อมูลรับโอน');
+    throw new Error('กรุณาตรวจคำขอเดิมก่อนแก้ไขจำนวนหรือข้อมูลรับแต้ม');
    if(!key.current){key.current=crypto.randomUUID();pending.current=current;sessionStorage.setItem('pair_withdrawal_pending',JSON.stringify({key:key.current,...current}))}
    const b=await read(await fetch('/api/member/withdrawals',{method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({...pending.current,idempotencyKey:key.current}),signal:AbortSignal.timeout(20000)}));
-   await load();setMessage('ส่งคำขอถอนแต้มเลขที่ '+b.request.id+' แล้ว รอแอดมินตรวจและโอนแต้ม');
+   await load();setMessage('ส่งคำขอถอนแต้มเลขที่ '+b.request.id+' แล้ว รอแอดมินตรวจและจ่ายแต้ม');
    key.current=null;pending.current=null;sessionStorage.removeItem('pair_withdrawal_pending');setPoints('');setDetails('');
   }catch(e){try{await load()}catch{}setMessage((e as Error).message+' · ตรวจสถานะก่อนกดส่งซ้ำ')}
   finally{lock.current=false;setBusy(false)}
  }
  return <section className="card" aria-label="ถอนแต้ม"><h2 id="wallet-dialog-title">ถอนแต้ม</h2>
   <p className="muted">เมื่อส่งคำขอ ระบบพักแต้มที่ขอไว้ก่อน หากถูกปฏิเสธจะคืนแต้มอัตโนมัติ</p><p>แต้มพร้อมถอน: <b>{balance===null?'กำลังตรวจสอบ':balance.toLocaleString('th-TH')} แต้ม</b></p>
-  <label>ข้อมูลรับโอน (ไม่เกิน 50 ตัวอักษร)
+  <label>ข้อมูลรับแต้ม (ไม่เกิน 50 ตัวอักษร)
    <input className="field" type="text" maxLength={50} value={details} disabled={busy} onChange={e=>setDetails(e.target.value)}/>
   </label>
   <p className="muted">ตัวอย่าง: กรอกเลขบัญชี หรือส่ง QR ให้แอดมินในแชท</p>
@@ -40,6 +40,6 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
   <button className="primary" type="button" disabled={busy||(!valid&&!key.current)} onClick={submit}>{busy?'กำลังส่ง':'ส่งคำขอถอนแต้ม'}</button>
   <p role="status">{message}</p>
   <button className="secondary" type="button" disabled={busy} onClick={()=>load().catch(e=>setMessage((e as Error).message))}>ตรวจสถานะล่าสุด</button>
-  {rows.map(r=><article className="item" key={r.id}><b>{r.requested_points.toLocaleString('th-TH')} แต้ม</b><p>{r.status==='TRANSFERRED'?'โอนแต้มแล้ว':r.status==='REJECTED'?'ปฏิเสธและคืนแต้มแล้ว':'รอโอนแต้ม'}</p><small>{r.id}</small></article>)}
+  {rows.map(r=><article className="item" key={r.id}><b>{r.requested_points.toLocaleString('th-TH')} แต้ม</b><p>{r.status==='TRANSFERRED'?'จ่ายแต้มแล้ว':r.status==='REJECTED'?'ปฏิเสธและคืนแต้มแล้ว':'รอรับแต้ม'}</p><small>{r.id}</small></article>)}
  </section>
 }
