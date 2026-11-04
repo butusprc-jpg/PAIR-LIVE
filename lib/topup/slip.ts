@@ -32,8 +32,17 @@ export async function putSlip(memberId:string,key:string,data:Buffer){
 }
 export async function getSlip(pool:Pool,id:string){
  if(!uuid(id))throw new TopupError('invalid_request_id');
- const r=await pool.query('SELECT slip_object_key,slip_content_type,slip_sha256 FROM member_topup_requests WHERE id=$1',[id]);
- const row=r.rows[0];
+ // The topup table uses FORCE RLS; read with the same transaction-local
+ // administrative scope as the authenticated topup queue route.
+ const connection=await pool.connect();
+ let row:{slip_object_key:string;slip_content_type:string;slip_sha256:string}|undefined;
+ try {
+  await connection.query('BEGIN');
+  await connection.query("SELECT set_config('pair_live.topup_admin','true',true)");
+  const result=await connection.query('SELECT slip_object_key,slip_content_type,slip_sha256 FROM member_topup_requests WHERE id=$1',[id]);
+  row=result.rows[0];
+  await connection.query('COMMIT');
+ }catch(error){await connection.query('ROLLBACK');throw error}finally{connection.release()}
  if(!row?.slip_object_key)throw new TopupError('slip_not_found',404);
  const {bucket,client}=storage();
  const object=await client.send(new GetObjectCommand({Bucket:bucket,Key:row.slip_object_key}));
