@@ -47,16 +47,17 @@ export async function dispatchTopupLine(pool:Pool,opts:{token?:string;fetch?:typ
  for(const row of rows){
   const rowData={id:row.request_id,displayName:row.display_name,points:row.requested_points,createdAt:row.created_at,status:'รอตรวจสอบ'};
   let slipUrl:string|undefined;
+  let expired=false;
   if(row.has_slip){
    try{
     // Read and verify the R2 object before advertising a fetchable image.
     const slip=await (opts.loadSlip??((id:string)=>getSlip(pool,id)))(row.request_id);
     if(slip.data.length>2*1024*1024||!['image/png','image/jpeg','image/webp'].includes(slip.type))throw Error('slip_invalid');
-    slipUrl=signedSlipUrl(origin,row.request_id);
-   }catch{slipUrl=undefined}
+    slipUrl=signedSlipUrl(origin,row.request_id,Date.now(),row.created_at);
+   }catch(e){slipUrl=undefined;expired=e instanceof Error&&e.message==='slip_expired'}
   }
   let result:{status:'ACCEPTED'|'TEMPORARY_ERROR'|'PERMANENT_ERROR';code?:string;retryAfterMs?:number};
-  try{await pushLine(row.recipient_user_id,[requestCard(rowData,slipUrl)],row.id,opts.fetch,token);result={status:'ACCEPTED'}}
+  try{await pushLine(row.recipient_user_id,[requestCard(rowData,slipUrl,expired)],row.id,opts.fetch,token);result={status:'ACCEPTED'}}
   catch(e){result={status:e instanceof Error&&'status' in e&&(e as {status:number}).status===422?'PERMANENT_ERROR':'TEMPORARY_ERROR',code:e instanceof Error?e.message:'line_transport'}}
   let status:'SENT'|'RETRY'|'FAILED';
   if(result.status==='ACCEPTED'){status='SENT';sent++}

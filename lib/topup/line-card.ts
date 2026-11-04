@@ -7,9 +7,10 @@ const CONFIRM_TTL_SECONDS=5*60;
 function secret(){const s=process.env.TOPUP_IMAGE_SIGNING_SECRET;if(!s||Buffer.byteLength(s)<32)throw new TopupError('topup_signing_not_configured',503);return s}
 function signature(payload:string){return createHmac('sha256',secret()).update(payload).digest('hex')}
 function equalSignature(received:string,expected:string){if(!/^[a-f0-9]{64}$/.test(received))return false;return timingSafeEqual(Buffer.from(received,'hex'),Buffer.from(expected,'hex'))}
-export function signedSlipUrl(origin:string,requestId:string,now=Date.now()){
+export function signedSlipUrl(origin:string,requestId:string,now=Date.now(),deadline?:Date|string){
  if(!uuid(requestId))throw new TopupError('invalid_request_id');const u=new URL(origin);if(u.protocol!=='https:'||u.username||u.password||u.search||u.hash)throw new TopupError('invalid_public_origin',503);
- const expires=Math.floor(now/1000)+IMAGE_TTL_SECONDS;
+ const expires=Math.min(Math.floor(now/1000)+IMAGE_TTL_SECONDS,deadline?Math.floor(new Date(deadline).getTime()/1000)+IMAGE_TTL_SECONDS:Number.MAX_SAFE_INTEGER);
+ if(expires<=Math.floor(now/1000))throw new TopupError('slip_expired',410);
  const image=new URL('/api/line/topup-image',u);image.searchParams.set('id',requestId);image.searchParams.set('exp',String(expires));image.searchParams.set('sig',signature(`slip|${requestId}|${expires}`));return image.toString();
 }
 export function validSlipLink(id:string,exp:string,sig:string,now=Date.now()){
@@ -45,9 +46,9 @@ function card(row:CardRow,title:string,bodyExtra:unknown[]=[],footer:unknown[]=[
   ...(footer.length?{footer:{type:'box',layout:'vertical',spacing:'sm',contents:footer}}:{})}};
 }
 function button(text:string,data:string,style:'primary'|'secondary'='secondary'){return {type:'button',style,...(style==='primary'?{color:'#1763DC'}:{}),height:'sm',action:{type:'postback',label:text,data,displayText:text}}}
-export function requestCard(row:CardRow,slipUrl?:string){
+export function requestCard(row:CardRow,slipUrl?:string,expired=false){
  const footer=slipUrl?[button(`✅ ยืนยัน ${row.points} แต้ม`,reviewData(row.id,'APPROVED'),'primary'),button('❌ ปฏิเสธ',reviewData(row.id,'REJECTED'))]:[];
- const extra=slipUrl?[]:[{type:'text',text:'⚠️ ภาพสลิปโหลดไม่ได้ กรุณาตรวจสอบในระบบก่อนดำเนินการ',color:'#B54138',size:'sm',wrap:true}];
+ const extra=slipUrl?[]:[{type:'text',text:expired?'ภาพสลิปหมดอายุแล้ว กรุณาตรวจสอบตามกระบวนการก่อนดำเนินการ':'⚠️ ภาพสลิปโหลดไม่ได้ กรุณาตรวจสอบในระบบก่อนดำเนินการ',color:'#B54138',size:'sm',wrap:true}];
  return card(row,'แจ้งเติมแต้ม',extra,footer,slipUrl);
 }
 export function confirmationCard(row:CardRow,decision:Decision,actor:string){

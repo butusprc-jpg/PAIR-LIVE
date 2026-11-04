@@ -35,15 +35,16 @@ export async function getSlip(pool:Pool,id:string){
  // The topup table uses FORCE RLS; read with the same transaction-local
  // administrative scope as the authenticated topup queue route.
  const connection=await pool.connect();
- let row:{slip_object_key:string;slip_content_type:string;slip_sha256:string}|undefined;
+ let row:{slip_object_key:string;slip_content_type:string;slip_sha256:string;created_at:Date;expires_at:Date|null;state:string|null}|undefined;
  try {
   await connection.query('BEGIN');
   await connection.query("SELECT set_config('pair_live.topup_admin','true',true)");
-  const result=await connection.query('SELECT slip_object_key,slip_content_type,slip_sha256 FROM member_topup_requests WHERE id=$1',[id]);
+  const result=await connection.query('SELECT r.slip_object_key,r.slip_content_type,r.slip_sha256,r.created_at,s.expires_at,s.state FROM member_topup_requests r LEFT JOIN member_topup_slip_retention s ON s.request_id=r.id WHERE r.id=$1',[id]);
   row=result.rows[0];
   await connection.query('COMMIT');
  }catch(error){await connection.query('ROLLBACK');throw error}finally{connection.release()}
  if(!row?.slip_object_key)throw new TopupError('slip_not_found',404);
+ if(row.state==='PURGED'||(row.expires_at?new Date(row.expires_at).getTime():new Date(row.created_at).getTime()+86400000)<=Date.now())throw new TopupError('slip_expired',410);
  const {bucket,client}=storage();
  const object=await client.send(new GetObjectCommand({Bucket:bucket,Key:row.slip_object_key}));
  if((object.ContentLength||0)>MAX_QR_BYTES||!object.Body)throw new TopupError('slip_missing',503);
