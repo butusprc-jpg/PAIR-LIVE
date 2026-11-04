@@ -73,6 +73,7 @@ async function sendWithdrawalAck(to:string,text:string,retryId:string,replyToken
 export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:string;userId:string;data:string;replyToken?:string},opts:{fetch?:typeof fetch;allowlist?:string}={}){
  const match=/^withdraw:v1:(transfer|reject):([0-9a-f-]{36})$/i.exec(event.data);
  if(!match)return {result:'INVALID'};
+ await scoped(pool,c=>c.query("INSERT INTO line_webhook_events(event_id,event_type,processing_status) VALUES($1,'postback','RECEIVED') ON CONFLICT(event_id) DO NOTHING",[event.webhookEventId]));
  const admin=await verifiedLineAdmin(pool,event.userId,opts.allowlist);
  if(!admin){console.error('withdraw_admin_not_verified');return {result:'FORBIDDEN'}};
  // Request-level locks and the immutable unique audit are authoritative against replay.
