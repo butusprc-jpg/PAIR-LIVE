@@ -28,7 +28,7 @@ export function MemberWithdraw(){
   }catch(e){try{await load()}catch{}setMessage((e as Error).message+' · ตรวจสถานะก่อนกดส่งซ้ำ')}
   finally{lock.current=false;setBusy(false)}
  }
- return <section className="card" aria-label="ถอนแต้ม"><h2>ถอนแต้ม</h2>
+ return <section className="card" aria-label="ถอนแต้ม"><h2 id="wallet-dialog-title">ถอนแต้ม</h2>
   <p>แต้มพร้อมถอน: <b>{balance===null?'กำลังตรวจสอบ':balance.toLocaleString('th-TH')} แต้ม</b></p>
   <label>ข้อมูลรับโอน (ไม่เกิน 50 ตัวอักษร)
    <input className="field" type="text" maxLength={50} value={details} disabled={busy} onChange={e=>setDetails(e.target.value)}/>
@@ -37,7 +37,7 @@ export function MemberWithdraw(){
   <label>จำนวนแต้มที่ต้องการถอน
    <input className="field" type="number" inputMode="numeric" step="1" min="1" max={balance??undefined} value={points} disabled={busy} onChange={e=>setPoints(e.target.value)}/>
   </label>
-  <button className="primary" type="button" disabled={busy||!valid} onClick={submit}>{busy?'กำลังส่ง':'ส่งคำขอถอนแต้ม'}</button>
+  <button className="primary" type="button" disabled={busy||(!valid&&!key.current)} onClick={submit}>{busy?'กำลังส่ง':'ส่งคำขอถอนแต้ม'}</button>
   <p role="status">{message}</p>
   <button className="secondary" type="button" disabled={busy} onClick={()=>load().catch(e=>setMessage((e as Error).message))}>ตรวจสถานะล่าสุด</button>
   {rows.map(r=><article className="item" key={r.id}><b>{r.requested_points.toLocaleString('th-TH')} แต้ม</b><p>{r.status==='TRANSFERRED'?'โอนแล้ว':r.status==='REJECTED'?'ปฏิเสธและคืนแต้มแล้ว':'รอโอน'}</p><small>{r.id}</small></article>)}
