@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
-import {parsePostback,resultMessage} from './line-card';
+import {parsePostback} from './line-card';
 import {pushLine,verifiedLineAdmin} from './line-provider';
 import {decideTopup,TopupError,uuid} from './store';
 import {dispatchApprovedMemberLine,enqueueApprovedMemberLine} from './member-line-notify';
@@ -27,7 +27,7 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
     const read=await pool.query('SELECT r.id,r.status,r.requested_points AS points,r.created_at AS "createdAt",m.display_name AS "displayName" FROM member_topup_requests r JOIN members m ON m.id=r.member_id WHERE r.id=$1',[previous.request_id]);
     const row=read.rows[0];
     const message=row&&['APPROVED','REJECTED'].includes(row.status)
-     ? resultMessage(row,row.status,admin.name,true)
+     ? {type:'text',text:`รายการนี้${row.status==='APPROVED'?'อนุมัติแล้ว':'ปฏิเสธแล้ว'} · ${row.points} แต้ม · ${row.displayName.slice(0,80)}`}
      : {type:'text',text:'รายการนี้ยังรอตรวจสอบ กรุณาเปิดรายการล่าสุด'};
     await pushLine(event.userId,[message],row&&['APPROVED','REJECTED'].includes(row.status)?`${event.webhookEventId}:status:${row.status}`:event.webhookEventId,options.fetch);
    }
@@ -75,7 +75,7 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
   if(result==='APPROVED'||result==='ALREADY_HANDLED')try{await dispatchApprovedMemberLine(pool,{fetch:options.fetch})}catch{/* Durable outbox retains the work for the retry worker. */}
   if(admin){
    const message=row&&parsed?.decision&&['APPROVED','REJECTED','ALREADY_HANDLED'].includes(result)
-     ? resultMessage(row,row.status==='APPROVED'?'APPROVED':'REJECTED',admin.name,result==='ALREADY_HANDLED')
+     ? {type:'text',text:`${result==='ALREADY_HANDLED'?'รายการนี้':''}${row.status==='APPROVED'?'✅ อนุมัติแล้ว':'❌ ปฏิเสธแล้ว'} · ${row.points} แต้ม · ${row.displayName.slice(0,80)}`}
      : {type:'text',text:result==='CANCELLED'?'ยกเลิกแล้ว':result==='NOT_FOUND'?'ไม่พบคำขอเติมแต้ม':result==='INVALID'?'ปุ่มไม่ถูกต้องหรือหมดอายุ กรุณาเปิดรายการใหม่':result.startsWith('BLOCKED_')?`อนุมัติไม่สำเร็จ: ${result.slice(8)}`:`ดำเนินการไม่สำเร็จ: ${result}`};
    await pushLine(event.userId,[message],event.webhookEventId,options.fetch);
   }
