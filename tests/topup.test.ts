@@ -5,7 +5,9 @@ import {Pool} from 'pg';
 import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
 import {createTopup,decideTopup,listTopups,validatePoints} from '../lib/topup/store';
 import {imageType} from '../lib/topup/qr';
+import {validateSlip} from '../lib/topup/slip';
 test('topup points reject invalid numbers and enforce server cap',()=>{for(const n of [0,-1,1.1,'1',NaN,Infinity,100001])assert.throws(()=>validatePoints(n));assert.equal(validatePoints(1),1)});
+test('slip rejects renamed text and invalid data',async()=>{await assert.rejects(validateSlip(Buffer.from('not-image')));});
 test('QR rejects renamed text, SVG and oversized payloads',()=>{for(const b of [Buffer.from('<svg/>'),Buffer.from('fake.png'),Buffer.alloc(2097153)])assert.throws(()=>imageType(b))});
 const raw=process.env.TOPUP_TEST_DATABASE_URL;
 test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states and RLS',{skip:!raw},async()=>{
