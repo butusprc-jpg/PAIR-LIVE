@@ -62,3 +62,8 @@ export function resultMessage(row:CardRow,decision:Decision,adminName:string,alr
  const status=decision==='APPROVED'?'✅ อนุมัติเติมแต้มสำเร็จ':'❌ ปฏิเสธคำขอเติมแต้ม';
  return {type:'text',text:`${already?'รายการนี้ดำเนินการแล้ว':'PAIR LIVE — '+status}\nสมาชิก: ${row.displayName.slice(0,80)}\nจำนวน: ${decision==='APPROVED'?'+':''}${row.points.toLocaleString('th-TH')} แต้ม\nสถานะ: ${decision}\nเลขคำขอ: ${row.id}${already?'':`\nผู้ดำเนินการ: ${adminName.slice(0,80)}`}`};
 }
+
+export function statusCard(row:CardRow){
+ const approved=row.status==='APPROVED';
+ return card({...row,status:approved?'อนุมัติแล้ว':'ปฏิเสธแล้ว'},approved?'✅ อนุมัติแล้ว':'❌ ปฏิเสธแล้ว');
+}
