@@ -47,10 +47,10 @@ test('withdrawal reserves balance, blocks overdraft, refunds rejection, and conf
    assert.equal(approved.result,'TRANSFERRED');
    assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[member])).rows[0].demo_points,20);
    assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_audit WHERE request_id=$1',[row.id])).rows[0].n,1);
-   assert.equal(delivery.filter(x=>x.to===memberLine&&x.text.includes('โอนแล้ว')).length,1);
+   assert.equal(delivery.filter(x=>x.to===memberLine&&x.text.includes('จ่ายแต้มแล้ว')).length,1);
    assert.equal((await processWithdrawalPostback(db,{webhookEventId:'synthetic-withdraw-replay',userId:adminLine,data:`withdraw:v1:transfer:${row.id}`},{fetch:fakeFetch,allowlist})).replayed,true);
    assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[member])).rows[0].demo_points,20);
-   assert.equal(delivery.filter(x=>x.to===memberLine&&x.text.includes('โอนแล้ว')).length,1);
+   assert.equal(delivery.filter(x=>x.to===memberLine&&x.text.includes('จ่ายแต้มแล้ว')).length,1);
    const reject=await createWithdrawal(db,member,10,'account 22',randomUUID(),recipients);
    assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[member])).rows[0].demo_points,10);
    const rejected=await decideWithdrawal(db,admin,reject.id,'REJECTED');assert.equal(rejected.status,'REJECTED');
