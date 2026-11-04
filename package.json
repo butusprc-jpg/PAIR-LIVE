@@ -10,7 +10,9 @@
     "round:worker": "tsx scripts/round-worker.ts",
     "round:duration": "tsx scripts/round-settings.ts",
     "notification:worker": "tsx scripts/notification-worker.ts",
-    "line:preflight": "tsx scripts/line-preflight.ts"
+    "line:preflight": "tsx scripts/line-preflight.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:metadata": "tsx scripts/db-metadata.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1161.0",
