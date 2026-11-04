@@ -36,7 +36,7 @@ The module accepts dependency injection and does not directly read process varia
 | Name | Purpose |
 | --- | --- |
 | `DATABASE_URL` | PAIR LIVE PostgreSQL, private reporting/worker connection with trusted TLS |
-| `LINE_OA_CHANNEL_ACCESS_TOKEN` | Server-only LINE Messaging API bearer credential |
+| `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN` | Server-only LINE Messaging API bearer credential |
 | `EMAIL_PROVIDER_API_KEY` | Server-only email transport credential if the chosen provider needs one |
 | `EMAIL_FROM` | Approved sender address |
 | `WECHAT_APP_ID` | WeChat OA application identifier |

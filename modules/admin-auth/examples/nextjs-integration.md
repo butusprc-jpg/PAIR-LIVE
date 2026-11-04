@@ -36,7 +36,7 @@ import {database} from '@/lib/server/db';
 const allowlist: unknown = JSON.parse(process.env.ADMIN_AUTH_ALLOWLIST_JSON || '[]');
 if (!Array.isArray(allowlist)) throw new Error('admin_not_configured');
 export const adminAuth = createAdminAuth({
-  channelId: process.env.LINE_CHANNEL_ID || '',
+  channelId: process.env.LINE_LOGIN_CHANNEL_ID || '',
   origin: process.env.ADMIN_AUTH_ORIGIN || '',
   allowlist, // Validate with your config loader; factory also validates entries at runtime.
   environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',

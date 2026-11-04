@@ -3,7 +3,7 @@ import {createAdminAuth,createPairLiveLineProvider,createPostgresAdminAdapters} 
 import type {AdminAuth,AdminRole} from '../../modules/admin-auth';
 import {database} from './db';
 export function configuredAdminAuth():AdminAuth|null{
- const channelId=process.env.LINE_CHANNEL_ID,origin=process.env.ADMIN_AUTH_ORIGIN,raw=process.env.ADMIN_AUTH_ALLOWLIST_JSON;
+ const channelId=process.env.LINE_LOGIN_CHANNEL_ID,origin=process.env.ADMIN_AUTH_ORIGIN,raw=process.env.ADMIN_AUTH_ALLOWLIST_JSON;
  if(!channelId||!origin||!raw||!process.env.DATABASE_URL)return null;
  const allowlist=JSON.parse(raw);
  return createAdminAuth({channelId,origin,allowlist,environment:process.env.NODE_ENV==='production'?'production':'development',identityProvider:createPairLiveLineProvider(),...createPostgresAdminAdapters(database())});

@@ -20,7 +20,7 @@ The module reads no server environment variables itself. The host constructs `Ad
 
 | Name | Purpose |
 | --- | --- |
-| `LINE_CHANNEL_ID` | Expected LINE Login channel; reuse the member configuration when appropriate |
+| `LINE_LOGIN_CHANNEL_ID` | Expected LINE Login channel; reuse the member configuration when appropriate |
 | `NEXT_PUBLIC_LINE_LIFF_ID` | Public LIFF app ID; existing client helper reads this |
 | `ADMIN_AUTH_ORIGIN` | Exact trusted origin, HTTPS in production |
 | `ADMIN_AUTH_ALLOWLIST_JSON` | Server-only JSON array of `{userId, role}` entries; no default admin |

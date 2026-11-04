@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {createHmac} from 'node:crypto';
+import {acceptedLineEvents,verifyLineSignature} from '../lib/line-webhook-core';
+test('LINE webhook verifies raw body and rejects altered or invalid signature',()=>{const raw=Buffer.from('{"events":[]}'),secret='test-secret',signature=createHmac('sha256',secret).update(raw).digest('base64');assert.equal(verifyLineSignature(raw,signature,secret),true);assert.equal(verifyLineSignature(Buffer.from('{"events":[ ]}'),signature,secret),false);assert.equal(verifyLineSignature(raw,'bad',secret),false)});
+test('only supported webhook event ids are accepted',()=>{assert.deepEqual(acceptedLineEvents({events:[{type:'follow',webhookEventId:'evt_1'},{type:'postback',webhookEventId:'evt_2'},{type:'message',webhookEventId:'bad id'}]}),[{type:'follow',webhookEventId:'evt_1'}])});
