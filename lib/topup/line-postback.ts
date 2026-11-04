@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
-import {parsePostback} from './line-card';
-import {verifiedLineAdmin} from './line-provider';
+import {confirmationCard,parsePostback,resultMessage} from './line-card';
+import {pushLine,verifiedLineAdmin} from './line-provider';
 import {decideTopup,TopupError,uuid} from './store';
 import {dispatchApprovedMemberLine,enqueueApprovedMemberLine} from './member-line-notify';
 export type PostbackEvent={webhookEventId:string;type:'postback';userId:string;data:string};
@@ -17,7 +17,23 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
   await c.query("INSERT INTO line_webhook_events(event_id,event_type,processing_status) VALUES($1,'postback','RECEIVED') ON CONFLICT(event_id) DO NOTHING",[event.webhookEventId]);
   const state=await c.query('SELECT event_type,processing_status FROM line_webhook_events WHERE event_id=$1 FOR UPDATE',[event.webhookEventId]);
   if(state.rows[0]?.event_type!=='postback')throw new TopupError('webhook_event_conflict',409);
-  if(state.rows[0]?.processing_status==='PROCESSED'){await c.query('COMMIT');return {duplicate:true}}
+  if(state.rows[0]?.processing_status==='PROCESSED'){
+   const action=await c.query('SELECT request_id,result,decision FROM member_topup_chat_actions WHERE event_id=$1',[event.webhookEventId]);
+   await c.query('COMMIT');
+   const admin=await verifiedLineAdmin(pool,event.userId,options.allowlist);
+   if(admin&&action.rows[0]){
+    const previous=action.rows[0];
+    const read=await pool.query('SELECT r.id,r.status,r.requested_points AS points,r.created_at AS "createdAt",m.display_name AS "displayName" FROM member_topup_requests r JOIN members m ON m.id=r.member_id WHERE r.id=$1',[previous.request_id]);
+    const row=read.rows[0];
+    const message=previous.result==='CONFIRM_REQUIRED'&&row&&previous.decision&&row.status==='PENDING'
+     ? confirmationCard({...row,status:'รอตรวจสอบ'},previous.decision,event.userId)
+     : row&&previous.decision&&['APPROVED','REJECTED','ALREADY_HANDLED'].includes(previous.result)
+      ? resultMessage(row,row.status==='APPROVED'?'APPROVED':'REJECTED',admin.name,previous.result==='ALREADY_HANDLED')
+      : {type:'text',text:'รายการนี้ดำเนินการแล้ว กรุณาตรวจสอบสถานะล่าสุด'};
+    await pushLine(event.userId,[message],event.webhookEventId,options.fetch);
+   }
+   return {duplicate:true};
+  }
   const admin=await verifiedLineAdmin(pool,event.userId,options.allowlist);
   const parsed=parsePostback(event.data,event.userId);
   const actorHash=createHash('sha256').update(event.userId).digest('hex');
@@ -27,12 +43,12 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
   if(!admin){stage='DENIED';result='FORBIDDEN';}
   else if(!parsed){result='INVALID';}
   else if(parsed.stage==='CANCEL'){result='CANCELLED';}
-  else if(parsed.stage==='CONFIRM'){result='OLD_CONFIRM_IGNORED';}
   else if(!row){result='NOT_FOUND';}
   else if(row.status!=='PENDING'){
    result='ALREADY_HANDLED';
    if(row.status==='APPROVED')await enqueueApprovedMemberLine(c,{id:row.id,member_id:row.member_id,requested_points:row.points});
   }
+  else if(parsed.stage==='REVIEW'){result='CONFIRM_REQUIRED';}
   else {
    try{
     if(parsed.decision==='APPROVED'){
@@ -55,6 +71,18 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
   await c.query("UPDATE line_webhook_events SET processing_status='PROCESSED',processed_at=now() WHERE event_id=$1",[event.webhookEventId]);
   await c.query('COMMIT');
   if(result==='APPROVED'||result==='ALREADY_HANDLED')try{await dispatchApprovedMemberLine(pool,{fetch:options.fetch})}catch{/* Durable outbox retains the work for the retry worker. */}
+  if(admin){
+   const message=result==='CONFIRM_REQUIRED'&&row&&parsed?.decision
+    ? confirmationCard({...row,status:'รอตรวจสอบ'},parsed.decision,event.userId)
+    : row&&parsed?.decision&&['APPROVED','REJECTED','ALREADY_HANDLED'].includes(result)
+     ? resultMessage(row,result==='ALREADY_HANDLED'?(row.status==='APPROVED'?'APPROVED':'REJECTED'):parsed.decision,admin.name,result==='ALREADY_HANDLED')
+     : {type:'text',text:result==='CANCELLED'?'ยกเลิกแล้ว':result==='NOT_FOUND'?'ไม่พบคำขอเติมแต้ม':result==='INVALID'?'ปุ่มไม่ถูกต้องหรือหมดอายุ กรุณาเปิดรายการใหม่':result.startsWith('BLOCKED_')?`อนุมัติไม่สำเร็จ: ${result.slice(8)}`:`ดำเนินการไม่สำเร็จ: ${result}`};
+   await pushLine(event.userId,[message],event.webhookEventId,options.fetch);
+  }
   return {duplicate:false,result};
- }catch(error){await c.query('ROLLBACK');throw error}finally{c.release()}
+ }catch(error){
+  try{await c.query('ROLLBACK')}catch{}
+  try{if(await verifiedLineAdmin(pool,event.userId,options.allowlist))await pushLine(event.userId,[{type:'text',text:`ดำเนินการเติมแต้มไม่สำเร็จ: ${error instanceof TopupError?error.code:'ระบบขัดข้อง กรุณาลองใหม่'}`}],event.webhookEventId+':error',options.fetch)}catch{}
+  throw error
+ }finally{c.release()}
 }
