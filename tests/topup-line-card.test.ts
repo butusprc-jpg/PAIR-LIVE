@@ -15,10 +15,10 @@ test('Flex card contains real request fields and signed image URL',()=>{
   assert.equal(validSlipLink(randomUUID(),u.searchParams.get('exp')!,u.searchParams.get('sig')!,now),false);
   const card=requestCard(row,url);const json=JSON.stringify(card);for(const value of ['lotus','500','แจ้งเติมแต้ม',id,url,'uri'])assert.ok(json.includes(value),value);
   assert.equal((card.contents as {hero?:unknown}).hero!==undefined,true);
-  const fallback=JSON.stringify(requestCard(row));assert.match(fallback,/ตรวจหลักฐานตามช่องทางที่ได้รับ/);assert.match(fallback,/admin\\/topup-review/);assert.doesNotMatch(fallback,/displayText/);const manual=JSON.stringify(requestCard(row,undefined,false,true));assert.match(manual,/admin\\/topup-review/);assert.doesNotMatch(manual,/ต้องตรวจภาพสลิป/);
+  const fallback=JSON.stringify(requestCard(row));assert.match(fallback,/ตรวจหลักฐานตามช่องทางที่ได้รับ/);assert.match(fallback,/admin\/topup-review/);assert.doesNotMatch(fallback,/displayText/);const manual=JSON.stringify(requestCard(row,undefined,false,true));assert.match(manual,/admin\/topup-review/);assert.doesNotMatch(manual,/ต้องตรวจภาพสลิป/);
   const primary=(requestCard(row) as {contents:{footer?:{contents:Array<{style?:string;color?:string,action:{data:string,displayText?:string}}>}}}).contents.footer?.contents;
   assert.ok(primary);assert.equal(primary?.[0]?.style,'primary');assert.equal(primary?.[0]?.color,'#1763DC');
-  assert.match(JSON.stringify(primary?.[0]?.action),/admin\\/topup-review/);
+  assert.match(JSON.stringify(primary?.[0]?.action),/admin\/topup-review/);
   assert.equal(primary?.[0]?.action.displayText,undefined);
   assert.doesNotMatch(JSON.stringify(requestCard(row)),/quickReply/);
  const confirm=confirmationCard(row,'APPROVED',actor);assert.match(JSON.stringify(confirm),/ตรวจสลิปแล้ว ยืนยัน/);
