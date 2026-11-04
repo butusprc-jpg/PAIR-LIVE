@@ -50,7 +50,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  assert.equal(sent.sent,1);
  assert.equal(captures.length,1);
  assert.match(String(captures[0].init.body),/32 แต้ม/);
- assert.match(String(captures[0].init.body),/ภาพสลิปโหลดไม่ได้/);
+ assert.match(String(captures[0].init.body),/รอสลิปจากสมาชิกทางแชต LINE/);
  assert.equal((await db.query("SELECT status FROM member_topup_line_notifications WHERE request_id=$1",[verified.id])).rows[0].status,'SENT');
  assert.equal((await dispatchTopupLine(db,{token:'synthetic-test-token',fetch:async()=>{throw new Error('unexpected_duplicate')}})).sent,0);
  const imageKey=randomUUID();const imageRequest=await createTopupWithSlip(db,member,31,imageKey,{objectKey:'topup-slips/'+member+'/'+imageKey,type:'image/png',sha:'f'.repeat(64)},[lineRecipient]);
@@ -62,7 +62,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  await assert.rejects(createTopupWithSlip(db,member,33,slipKey,slip),/idempotency_conflict/);
  await assert.rejects(createTopupWithSlip(db,member,32,slipKey,{...slip,sha:'b'.repeat(64)}),/idempotency_conflict/);
  assert.equal((await listTopups(db,member)).find(r=>r.id===verified.id).has_slip,true);
- const key=randomUUID();const requests=await Promise.all(Array.from({length:8},()=>createTopup(db!,member,50,key)));assert.equal(new Set(requests.map(r=>r.id)).size,1);await assert.rejects(createTopup(db,member,51,key),/idempotency_conflict/);
+ const key=randomUUID();const requests=await Promise.all(Array.from({length:8},()=>createTopup(db!,member,50,key,[lineRecipient])));assert.equal(new Set(requests.map(r=>r.id)).size,1);assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_line_notifications WHERE request_id=$1',[requests[0].id])).rows[0].n,1);await assert.rejects(createTopup(db,member,51,key),/idempotency_conflict/);
  const id=requests[0].id;await Promise.all(Array.from({length:12},(_,i)=>decideTopup(db!,admins[i%2].id,id,'APPROVED','manual synthetic check')));
  assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[member])).rows[0].demo_points,150);assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit')).rows[0].n,1);assert.equal((await db.query('SELECT count(*)::int n FROM member_wallets')).rows[0].n,0);
  await decideTopup(db,admins[0].id,id,'APPROVED','replay after lost response');await assert.rejects(decideTopup(db,admins[0].id,id,'REJECTED',''),/terminal_status/);
