@@ -1,7 +1,7 @@
 name: Manual topup PostgreSQL tests
 on:
   push:
-    branches: [feat/pair-live-v1]
+    branches: [feat/pair-live-v1, feat/pair-live-withdrawal-v1]
   workflow_dispatch:
 permissions:
   contents: read
