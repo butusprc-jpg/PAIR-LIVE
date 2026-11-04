@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {providerPairConfigured} from '../../../../lib/topup/line-provider';
 import {adminAccess} from '../../../../lib/server/admin-auth';
 import {database} from '../../../../lib/server/db';
 import {createLineAdminAdapter} from '../../../../modules/report-notification/server/line-admin-adapter';
@@ -9,7 +10,7 @@ export async function POST(request:Request){
  const auth=await adminAccess(request,['admin'],true);
  if(!auth.ok)return Response.json({error:auth.error},{status:403,headers:noStore});
  const token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
- if(!token)return Response.json({error:'line_token_not_configured'},{status:503,headers:noStore});
+ if(!token||!providerPairConfigured())return Response.json({error:'line_provider_not_configured'},{status:503,headers:noStore});
  try{
   const c=await database().connect();let row:{provider_user_id:string}|undefined;
   try{
