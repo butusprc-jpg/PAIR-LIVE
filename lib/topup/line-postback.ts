@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
-import {confirmationCard,parsePostback,resultMessage} from './line-card';
+import {confirmationCard,parsePostback,statusCard} from './line-card';
 import {pushLine,verifiedLineAdmin} from './line-provider';
 import {decideTopup,TopupError,uuid} from './store';
 import {dispatchApprovedMemberLine,enqueueApprovedMemberLine} from './member-line-notify';
@@ -29,9 +29,9 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
     const message=previous.result==='CONFIRM_REQUIRED'&&row&&previous.decision&&row.status==='PENDING'
      ? confirmationCard({...row,status:'รอตรวจสอบ'},previous.decision,event.userId)
      : row&&['APPROVED','REJECTED'].includes(row.status)
-      ? resultMessage(row,row.status,admin.name,true)
+      ? statusCard(row)
       : {type:'text',text:'รายการนี้ดำเนินการแล้ว กรุณาตรวจสอบสถานะล่าสุด'};
-    await pushLine(event.userId,[message],event.webhookEventId,options.fetch);
+    await pushLine(event.userId,[message],row&&['APPROVED','REJECTED'].includes(row.status)?`${event.webhookEventId}:status:${row.status}`:event.webhookEventId,options.fetch);
    }
    return {duplicate:true};
   }
@@ -76,14 +76,14 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
    event.webhookEventId,row?.id||null,admin?.id||null,actorHash,stage,parsed?.decision||null,result]);
   await c.query("UPDATE line_webhook_events SET processing_status='PROCESSED',processed_at=now() WHERE event_id=$1",[event.webhookEventId]);
   await c.query('COMMIT');committed=true;
-  if(row&&result==='ALREADY_HANDLED'){
+  if(row&&['APPROVED','REJECTED','ALREADY_HANDLED'].includes(result)){
    const latest=await pool.query('SELECT status FROM member_topup_requests WHERE id=$1',[row.id]);
    if(latest.rows[0])row={...row,status:latest.rows[0].status};
   }
   if(result==='APPROVED'||result==='ALREADY_HANDLED')try{await dispatchApprovedMemberLine(pool,{fetch:options.fetch})}catch{/* Durable outbox retains the work for the retry worker. */}
   if(admin&&result!=='CONFIRM_REQUIRED'){
    const message=row&&parsed?.decision&&['APPROVED','REJECTED','ALREADY_HANDLED'].includes(result)
-     ? resultMessage(row,result==='ALREADY_HANDLED'?(row.status==='APPROVED'?'APPROVED':'REJECTED'):parsed.decision,admin.name,result==='ALREADY_HANDLED')
+     ? statusCard(row)
      : {type:'text',text:result==='CANCELLED'?'ยกเลิกแล้ว':result==='NOT_FOUND'?'ไม่พบคำขอเติมแต้ม':result==='INVALID'?'ปุ่มไม่ถูกต้องหรือหมดอายุ กรุณาเปิดรายการใหม่':result.startsWith('BLOCKED_')?`อนุมัติไม่สำเร็จ: ${result.slice(8)}`:`ดำเนินการไม่สำเร็จ: ${result}`};
    await pushLine(event.userId,[message],event.webhookEventId,options.fetch);
   }
