@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {memberEntry} from '../lib/member-entry';
+test('rich menu entries survive encoded URL and reject external redirects',()=>{assert.equal(memberEntry('?entry=live'),'live');assert.equal(memberEntry('?entry=wallet'),'wallet');assert.equal(memberEntry('?entry=history'),'history');assert.equal(memberEntry('?entry=%77allet'),'wallet');assert.equal(memberEntry('?entry=https%3A%2F%2Fevil.example'),'live')});

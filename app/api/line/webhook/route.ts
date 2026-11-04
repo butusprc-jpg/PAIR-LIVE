@@ -1,5 +1,4 @@
-import {NextResponse} from 'next/server';
 import {database} from '../../../../lib/server/db';
-import {acceptedLineEvents,verifyLineSignature} from '../../../../lib/server/line-webhook';
+import {handleLineWebhook} from '../../../../lib/server/line-webhook';
 export const runtime='nodejs';
-export async function POST(request:Request){const secret=process.env.LINE_MESSAGING_CHANNEL_SECRET;if(!secret)return NextResponse.json({error:'webhook_not_configured'},{status:503});let raw:Buffer;try{raw=Buffer.from(await request.arrayBuffer())}catch{return NextResponse.json({error:'invalid_body'},{status:400})}if(raw.length>1024*1024)return NextResponse.json({error:'body_too_large'},{status:413});if(!verifyLineSignature(raw,request.headers.get('x-line-signature'),secret))return NextResponse.json({error:'invalid_signature'},{status:401});try{const events=acceptedLineEvents(JSON.parse(raw.toString('utf8')));for(const event of events)await database().query('INSERT INTO line_webhook_events(event_id,event_type) VALUES($1,$2) ON CONFLICT(event_id) DO NOTHING',[event.webhookEventId,event.type]);return NextResponse.json({ok:true},{headers:{'Cache-Control':'no-store'}})}catch{return NextResponse.json({error:'webhook_unavailable'},{status:503})}}
+export async function POST(request:Request){return handleLineWebhook(request,process.env.LINE_MESSAGING_CHANNEL_SECRET,async event=>{await database().query('INSERT INTO line_webhook_events(event_id,event_type,processing_status) VALUES($1,$2,\'RECEIVED\') ON CONFLICT(event_id) DO NOTHING',[event.webhookEventId,event.type])})}

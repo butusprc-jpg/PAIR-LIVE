@@ -1,2 +1,2 @@
 import 'server-only';
-export {acceptedLineEvents,verifyLineSignature} from '../line-webhook-core';
+export {acceptedLineEvents,verifyLineSignature,handleLineWebhook} from '../line-webhook-core';
