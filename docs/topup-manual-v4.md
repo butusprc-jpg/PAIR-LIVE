@@ -1,0 +1,11 @@
+# V4 manual slip topup
+
+The member page opens the existing signed QR image URL on demand. In a LINE WebView the button calls LIFF `openWindow({external:true})`; in a normal browser it navigates to the signed image. The 180-second token is minted on each tap. The private R2 QR object and admin upload are unchanged.
+
+`POST /api/member/topups` now accepts JSON `{points: integer, idempotencyKey: UUID}` from an authenticated member session. `createTopup()` inserts the PENDING request and LINE notification recipients in one PostgreSQL transaction. Replaying the same key and points returns the same request without new outbox rows. No slip image is uploaded. The member is instructed to send the slip and request ID through LINE OA chat.
+
+The LINE card for a new no-slip request states that it is waiting for a slip in chat, shows no image, and retains the review/reject postback buttons. The approval confirmation button says `ตรวจสลิปแล้ว ยืนยัน` and the website approval API requires an explicit `evidenceReviewed=true` for no-slip requests; the LINE postback confirmation card requires the admin to press `ตรวจสลิปแล้ว ยืนยัน`. These are manual admin attestations, not proof that a slip exists in the chat. The admin must match the request ID and member before pressing it. Automatic slip matching and approval are not enabled. Existing uploaded-slip requests retain their image and expiry rules. Website approval also requires the admin to check the evidence box for a no-slip request. The existing `decideTopup()` ledger transaction is unchanged.
+
+The five-minute Vercel Cron schedule is removed from `vercel.json`; `TOPUP_CLEANUP_ENABLED=false` remains the default. The protected cleanup API and migration 014 remain, but there is no automatic invocation. No old R2 object or accounting audit is deleted by V4. Do not enable cleanup without a separately approved policy, scheduler and monitoring plan.
+
+Before production schema changes, back up Neon and verify migrations through 013, wallet LEGACY state, private R2 bucket, and LINE channel/provider configuration. Apply migration 014 on a test database first. Production migration and deployment require separate authorization. Test with synthetic accounts; do not approve real pending topups.

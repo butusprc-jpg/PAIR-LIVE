@@ -50,7 +50,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  assert.equal(sent.sent,1);
  assert.equal(captures.length,1);
  assert.match(String(captures[0].init.body),/32 แต้ม/);
- assert.match(String(captures[0].init.body),/รอสลิปจากสมาชิกทางแชต LINE/);
+ assert.match(String(captures[0].init.body),/ภาพสลิปโหลดไม่ได้/);
  assert.equal((await db.query("SELECT status FROM member_topup_line_notifications WHERE request_id=$1",[verified.id])).rows[0].status,'SENT');
  assert.equal((await dispatchTopupLine(db,{token:'synthetic-test-token',fetch:async()=>{throw new Error('unexpected_duplicate')}})).sent,0);
  const imageKey=randomUUID();const imageRequest=await createTopupWithSlip(db,member,31,imageKey,{objectKey:'topup-slips/'+member+'/'+imageKey,type:'image/png',sha:'f'.repeat(64)},[lineRecipient]);
@@ -116,4 +116,4 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  }finally{for(const k of ['LINE_LOGIN_PROVIDER_ID','LINE_MESSAGING_PROVIDER_ID','LINE_LOGIN_CHANNEL_ID','LINE_MESSAGING_CHANNEL_ID'])delete process.env[k];await db?.end();await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await pool.end()}
 });
 
-test('request card without slip requires manual chat verification and contains no approval actions',async()=>{const {requestCard}=await import('../lib/topup/line-card');const card=requestCard({id:randomUUID(),displayName:'Synthetic Member',points:50,status:'รอตรวจสอบ',createdAt:new Date()});const json=JSON.stringify(card);assert.match(json,/รอสลิปจากสมาชิกทางแชต LINE/);assert.doesNotMatch(json,/topup:v2:review/);const manual=JSON.stringify(requestCard({id:randomUUID(),displayName:'Synthetic Member',points:50,status:'รอตรวจสอบ',createdAt:new Date()},undefined,false,true));assert.match(manual,/topup:v2:review/);assert.match(manual,/ต้องตรวจภาพสลิป/)});
+test('request card without slip requires manual chat verification and contains no approval actions',async()=>{const {requestCard}=await import('../lib/topup/line-card');const card=requestCard({id:randomUUID(),displayName:'Synthetic Member',points:50,status:'รอตรวจสอบ',createdAt:new Date()});const json=JSON.stringify(card);assert.match(json,/ภาพสลิปโหลดไม่ได้/);assert.doesNotMatch(json,/topup:v2:review/);const manual=JSON.stringify(requestCard({id:randomUUID(),displayName:'Synthetic Member',points:50,status:'รอตรวจสอบ',createdAt:new Date()},undefined,false,true));assert.match(manual,/topup:v2:review/);assert.match(manual,/ต้องตรวจภาพสลิป/)});

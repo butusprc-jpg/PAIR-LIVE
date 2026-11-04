@@ -53,7 +53,7 @@ export function requestCard(row:CardRow,slipUrl?:string,expired=false,manualChat
 }
 export function confirmationCard(row:CardRow,decision:Decision,actor:string){
  return card(row,decision==='APPROVED'?'ยืนยันการเติมแต้ม':'ยืนยันการปฏิเสธ',[{type:'text',text:'กดยืนยันเมื่อได้ตรวจสอบภาพสลิปที่ตรงกับเลขคำขอนี้แล้วเท่านั้น',size:'sm',wrap:true,color:'#B54138'}],[
- button(decision==='APPROVED'?`ยืนยันการอนุมัติ ${row.points} แต้ม`:'ยืนยันการปฏิเสธ',confirmationData(row.id,decision,actor),'primary'),button('ยกเลิก','topup:v2:cancel')]);
+ button(decision==='APPROVED'?'ตรวจสลิปแล้ว ยืนยัน':'ยืนยันการปฏิเสธ',confirmationData(row.id,decision,actor),'primary'),button('ยกเลิก','topup:v2:cancel')]);
 }
 export function resultMessage(row:CardRow,decision:Decision,adminName:string,already=false){
  const status=decision==='APPROVED'?'✅ อนุมัติเติมแต้มสำเร็จ':'❌ ปฏิเสธคำขอเติมแต้ม';

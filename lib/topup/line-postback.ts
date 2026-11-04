@@ -5,7 +5,7 @@ import {pushLine,verifiedLineAdmin} from './line-provider';
 import {decideTopup,TopupError,uuid} from './store';
 export type PostbackEvent={webhookEventId:string;type:'postback';userId:string;data:string};
 async function currentRequest(client:PoolClient,id:string){
- const q=await client.query("SELECT r.id,r.status,r.requested_points AS points,r.created_at AS \"createdAt\",m.display_name AS \"displayName\" FROM member_topup_requests r JOIN members m ON m.id=r.member_id WHERE r.id=$1",[id]);return q.rows[0] as {id:string;status:string;points:number;createdAt:Date;displayName:string}|undefined;
+ const q=await client.query("SELECT r.id,r.status,r.requested_points AS points,r.created_at AS \"createdAt\",m.display_name AS \"displayName\",(r.slip_object_key IS NOT NULL) AS \"hasSlip\" FROM member_topup_requests r JOIN members m ON m.id=r.member_id WHERE r.id=$1",[id]);return q.rows[0] as {id:string;status:string;points:number;createdAt:Date;displayName:string;hasSlip:boolean}|undefined;
 }
 // Called only after raw-body X-Line-Signature verification. The event row serializes
 // retries, while decideTopup's request lock and unique audit are authoritative.
@@ -31,7 +31,7 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
   else if(parsed.stage==='REVIEW'){result='AWAITING_CONFIRMATION';message=confirmationCard(row,parsed.decision!,event.userId);}
   else {
    try{
-    const decided=await decideTopup(pool,admin.id,row.id,parsed.decision!,'LINE OA postback');
+    const decided=await decideTopup(pool,admin.id,row.id,parsed.decision!,row.hasSlip?'LINE OA postback':'LINE OA postback · slip reviewed in chat');
     const replayed=decided.replayed===true;
     result=replayed?'ALREADY_HANDLED':decided.status;
     message=resultMessage(row,parsed.decision!,admin.name,replayed);
