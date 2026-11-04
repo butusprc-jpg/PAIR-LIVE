@@ -45,9 +45,12 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_line_notifications WHERE request_id=$1',[verified.id])).rows[0].n,1);
  process.env.LINE_LOGIN_CHANNEL_ID='test';process.env.LINE_MESSAGING_CHANNEL_ID='different-messaging-channel';process.env.LINE_LOGIN_PROVIDER_ID='synthetic-provider';process.env.LINE_MESSAGING_PROVIDER_ID='synthetic-provider';
  assert.deepEqual(await dispatchTopupLine(db,{token:''}),{configured:false,sent:0,pending:0,failed:0});
+ // Sending a notification must not depend on postback/login provider configuration.
+ delete process.env.LINE_LOGIN_PROVIDER_ID;delete process.env.LINE_MESSAGING_PROVIDER_ID;
  const captures:{url:string;init:RequestInit}[]=[];
  const sent=await dispatchTopupLine(db,{token:'synthetic-test-token',origin:'https://pair-live.vercel.app',fetch:async(url,init)=>{captures.push({url:String(url),init:init||{}});return new Response('',{status:200})}});
  assert.equal(sent.sent,1);
+ process.env.LINE_LOGIN_PROVIDER_ID='synthetic-provider';process.env.LINE_MESSAGING_PROVIDER_ID='synthetic-provider';
  assert.equal(captures.length,1);
  assert.match(String(captures[0].init.body),/32 แต้ม/);
  assert.match(String(captures[0].init.body),/ภาพสลิปโหลดไม่ได้/);

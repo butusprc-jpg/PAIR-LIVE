@@ -1,7 +1,7 @@
 import type {Pool} from 'pg';
 import {getSlip} from './slip';
 import {requestCard,signedSlipUrl} from './line-card';
-import {providerPairConfigured,pushLine} from './line-provider';
+import {pushLine} from './line-provider';
 
 // Users in the admin allowlist are selected server-side only. LINE Login and
 // Messaging API must share the same LINE provider, and the admin must be an OA friend.
@@ -22,7 +22,7 @@ async function scoped<T>(pool:Pool,action:(client:import('pg').PoolClient)=>Prom
 }
 export async function dispatchTopupLine(pool:Pool,opts:{token?:string;fetch?:typeof fetch;origin?:string;loadSlip?:(id:string)=>Promise<{data:Buffer;type:string}>}={}):Promise<LineNotifyOutcome>{
  const token=opts.token??process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
- if(!token||!providerPairConfigured())return {configured:false,sent:0,pending:0,failed:0};
+ if(!token)return {configured:false,sent:0,pending:0,failed:0};
  // Every claim receives a stable UUID retry key. A 40s lease survives a crashed function.
  const rows=await scoped(pool,async c=>(await c.query<QueueRow>(`
  WITH candidate AS (
