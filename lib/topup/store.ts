@@ -6,7 +6,7 @@ export function validatePoints(n:unknown){if(typeof n!=='number'||!Number.isSafe
 export function uuid(s:unknown):s is string{return typeof s==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)}
 async function transaction<T>(pool:Pool,member:string|null,fn:(c:PoolClient)=>Promise<T>){const c=await pool.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.member_id',$1,true),set_config('pair_live.topup_admin',$2,true)",[member||'',member?'false':'true']);const result=await fn(c);await c.query('COMMIT');return result}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}
 export function createTopup(pool:Pool,memberId:string,points:unknown,key:unknown){validatePoints(points);if(!uuid(key))throw new TopupError('invalid_idempotency_key');return transaction(pool,memberId,async c=>{const m=await c.query('SELECT status FROM members WHERE id=$1 FOR UPDATE',[memberId]);if(m.rows[0]?.status!=='active')throw new TopupError('member_suspended',403);const inserted=await c.query('INSERT INTO member_topup_requests(member_id,requested_points,idempotency_key) VALUES($1,$2,$3) ON CONFLICT(member_id,idempotency_key) DO NOTHING RETURNING *',[memberId,points,key]);const row=inserted.rows[0]||(await c.query('SELECT * FROM member_topup_requests WHERE member_id=$1 AND idempotency_key=$2',[memberId,key])).rows[0];if(row.requested_points!==points)throw new TopupError('idempotency_conflict',409);return row})}
-export function createTopupWithSlip(pool:Pool,memberId:string,points:unknown,key:unknown,slip:{objectKey:string;type:string;sha:string}){
+export function createTopupWithSlip(pool:Pool,memberId:string,points:unknown,key:unknown,slip:{objectKey:string;type:string;sha:string},recipients:readonly string[]=[]){
  validatePoints(points);
  if(!uuid(key)||!slip.objectKey.startsWith('topup-slips/'+memberId+'/'+key)||!['image/png','image/jpeg','image/webp'].includes(slip.type)||!/^[0-9a-f]{64}$/.test(slip.sha))throw new TopupError('invalid_slip',400);
  return transaction(pool,memberId,async c=>{
@@ -15,6 +15,14 @@ export function createTopupWithSlip(pool:Pool,memberId:string,points:unknown,key
   const result=await c.query('INSERT INTO member_topup_requests(member_id,requested_points,idempotency_key,slip_object_key,slip_content_type,slip_sha256) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(member_id,idempotency_key) DO NOTHING RETURNING *',[memberId,points,key,slip.objectKey,slip.type,slip.sha]);
   const row=result.rows[0]||(await c.query('SELECT * FROM member_topup_requests WHERE member_id=$1 AND idempotency_key=$2',[memberId,key])).rows[0];
   if(!row||row.requested_points!==points||row.slip_sha256!==slip.sha||row.slip_object_key!==slip.objectKey)throw new TopupError('idempotency_conflict',409);
+  // Enqueue only on first INSERT, atomically with the new topup request.
+  // An idempotent replay must not create another LINE notification.
+  if(result.rows.length){
+   for(const userId of new Set(recipients)){
+    if(!/^U[0-9a-f]{32}$/i.test(userId))throw new TopupError('invalid_line_recipient');
+    await c.query('INSERT INTO member_topup_line_notifications(request_id,member_id,recipient_user_id) VALUES($1,$2,$3) ON CONFLICT(request_id,recipient_user_id) DO NOTHING',[row.id,memberId,userId]);
+   }
+  }
   return row;
  });
 }

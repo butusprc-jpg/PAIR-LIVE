@@ -3,6 +3,7 @@ import {database} from '../../../../lib/server/db';
 import {createTopupWithSlip,listTopups,maximumPoints,TopupError,validatePoints,uuid} from '../../../../lib/topup/store';
 import {putSlip} from '../../../../lib/topup/slip';
 import {MAX_QR_BYTES} from '../../../../lib/topup/qr';
+import {dispatchTopupLine,lineAdminRecipients} from '../../../../lib/topup/line-notify';
 import {noStore,topupFailure} from '../../../../lib/topup/http';
 export const runtime='nodejs';
 export async function GET(){
@@ -28,7 +29,10 @@ export async function POST(request:Request){
   const file=form.get('slip');
   if(!(file instanceof File)||file.size<1||file.size>MAX_QR_BYTES)throw new TopupError('invalid_image_size');
   const slip=await putSlip(m.id,key,Buffer.from(await file.arrayBuffer()));
-  const record=await createTopupWithSlip(database(),m.id,points,key,slip);
+  const record=await createTopupWithSlip(database(),m.id,points,key,slip,lineAdminRecipients(process.env.ADMIN_AUTH_ALLOWLIST_JSON));
+  // The member's topup is committed independently of LINE availability.
+  // Persisted outbox rows can be retried from the protected admin API.
+  try{await dispatchTopupLine(database())}catch(error){console.error('topup_line_dispatch_failed',error instanceof Error?error.name:'unknown')}
   return Response.json({request:record},{headers:noStore});
  }catch(e){return topupFailure(e)}
 }

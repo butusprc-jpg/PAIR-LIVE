@@ -7,6 +7,12 @@ import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
 import {createTopup,createTopupWithSlip,decideTopup,listTopups,validatePoints} from '../lib/topup/store';
 import {imageType} from '../lib/topup/qr';
 import {validateSlip} from '../lib/topup/slip';
+import {lineAdminRecipients,dispatchTopupLine} from '../lib/topup/line-notify';
+test('LINE admin recipients only include validated admin roles',()=>{
+ const u='U'+'a'.repeat(32),viewer='U'+'b'.repeat(32);
+ assert.deepEqual(lineAdminRecipients(JSON.stringify([{userId:u,role:'admin'},{userId:viewer,role:'viewer'},{userId:u,role:'admin'},{userId:'bad',role:'admin'}])),[u]);
+ assert.deepEqual(lineAdminRecipients('invalid'),[]);
+});
 test('external QR links expire and reject tampering',()=>{
  const secret='synthetic-only-signing-secret',now=1793770000;
  const token=createExternalQrToken(secret,now);
@@ -28,9 +34,21 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  const admins=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name) VALUES('line','test','test-a','Admin A'),('line','test','test-b','Admin B') RETURNING id")).rows;
  const slipKey=randomUUID(),slipSha='a'.repeat(64);
  const slip={objectKey:'topup-slips/'+member+'/'+slipKey,type:'image/jpeg',sha:slipSha};
- const verified=await createTopupWithSlip(db,member,32,slipKey,slip);
+ const lineRecipient='U'+'a'.repeat(32);
+ const verified=await createTopupWithSlip(db,member,32,slipKey,slip,[lineRecipient]);
  assert.equal(verified.slip_sha256,slipSha);
- assert.equal((await createTopupWithSlip(db,member,32,slipKey,slip)).id,verified.id);
+ assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_line_notifications WHERE request_id=$1',[verified.id])).rows[0].n,1);
+ assert.deepEqual(await dispatchTopupLine(db,{token:''}),{configured:false,sent:0,pending:0,failed:0});
+ const captures:{url:string;init:RequestInit}[]=[];
+ const sent=await dispatchTopupLine(db,{token:'synthetic-test-token',origin:'https://pair-live.vercel.app',fetch:async(url,init)=>{captures.push({url:String(url),init:init||{}});return new Response('',{status:200})}});
+ assert.equal(sent.sent,1);
+ assert.equal(captures.length,1);
+ assert.match(String(captures[0].init.body),/32 แต้ม/);
+ assert.match(String(captures[0].init.body),/\/admin/);
+ assert.equal((await db.query("SELECT status FROM member_topup_line_notifications WHERE request_id=$1",[verified.id])).rows[0].status,'SENT');
+ assert.equal((await dispatchTopupLine(db,{token:'synthetic-test-token',fetch:async()=>{throw new Error('unexpected_duplicate')}})).sent,0);
+ assert.equal((await createTopupWithSlip(db,member,32,slipKey,slip,[lineRecipient])).id,verified.id);
+ assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_line_notifications WHERE request_id=$1',[verified.id])).rows[0].n,1);
  await assert.rejects(createTopupWithSlip(db,member,33,slipKey,slip),/idempotency_conflict/);
  await assert.rejects(createTopupWithSlip(db,member,32,slipKey,{...slip,sha:'b'.repeat(64)}),/idempotency_conflict/);
  assert.equal((await listTopups(db,member)).find(r=>r.id===verified.id).has_slip,true);
