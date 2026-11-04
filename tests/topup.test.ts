@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {createExternalQrToken,verifyExternalQrToken} from '../lib/topup/external-qr';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {Pool} from 'pg';
@@ -6,6 +7,15 @@ import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
 import {createTopup,createTopupWithSlip,decideTopup,listTopups,validatePoints} from '../lib/topup/store';
 import {imageType} from '../lib/topup/qr';
 import {validateSlip} from '../lib/topup/slip';
+test('external QR links expire and reject tampering',()=>{
+ const secret='synthetic-only-signing-secret',now=1793770000;
+ const token=createExternalQrToken(secret,now);
+ assert.equal(verifyExternalQrToken(String(token.expires),token.signature,secret,now),true);
+ assert.equal(verifyExternalQrToken(String(token.expires),token.signature,secret,now+181),false);
+ assert.equal(verifyExternalQrToken(String(token.expires+400),token.signature,secret,now),false);
+ assert.equal(verifyExternalQrToken(String(token.expires),'0'.repeat(64),secret,now),false);
+ assert.equal(verifyExternalQrToken('bad',token.signature,secret,now),false);
+});
 test('topup points reject invalid numbers and enforce server cap',()=>{for(const n of [0,-1,1.1,'1',NaN,Infinity,100001])assert.throws(()=>validatePoints(n));assert.equal(validatePoints(1),1)});
 test('slip rejects renamed text and invalid data',async()=>{await assert.rejects(validateSlip(Buffer.from('not-image')));});
 test('QR rejects renamed text, SVG and oversized payloads',()=>{for(const b of [Buffer.from('<svg/>'),Buffer.from('fake.png'),Buffer.alloc(2097153)])assert.throws(()=>imageType(b))});
