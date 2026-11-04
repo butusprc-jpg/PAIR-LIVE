@@ -6,7 +6,7 @@ export function providerPairConfigured(){const login=process.env.LINE_LOGIN_PROV
 export type VerifiedLineAdmin={id:string;name:string;userId:string};
 export async function verifiedLineAdmin(pool:Pool,userId:string,allowlist=process.env.ADMIN_AUTH_ALLOWLIST_JSON):Promise<VerifiedLineAdmin|null>{
  if(!/^U[0-9a-f]{32}$/i.test(userId)||!lineAdminRecipients(allowlist).includes(userId))return null;
- if(!providerPairConfigured())throw new TopupError('line_provider_mismatch',503);const channel=process.env.LINE_LOGIN_CHANNEL_ID!;
+ const channel=process.env.LINE_LOGIN_CHANNEL_ID;if(!channel)throw new TopupError('line_login_channel_not_configured',503);
  // A LINE user ID is scoped to its provider. No ID supplied in postback data is trusted.
  const q=await pool.query("SELECT id,display_name FROM admin_identities WHERE provider='line' AND provider_user_id=$1 AND provider_channel_id=$2 AND status='active'",[userId,channel]);
  return q.rows[0]?{id:q.rows[0].id,name:q.rows[0].display_name,userId}:null;

@@ -84,6 +84,8 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   const pending=await createTopup(db,chatMember,500,randomUUID());
   const seen:{to:string;text:string}[]=[];const fakeFetch:typeof fetch=async(_url,init)=>{const payload=JSON.parse(String(init?.body));seen.push({to:payload.to,text:payload.messages[0].text});return new Response('',{status:200})};
   const allow=JSON.stringify([{userId:adminA,role:'admin'},{userId:adminB,role:'admin'},{userId:outsider,role:'viewer'}]);
+  // Outbound and admin postbacks need a verified LINE user match, not redundant Provider IDs.
+  delete process.env.LINE_LOGIN_PROVIDER_ID;delete process.env.LINE_MESSAGING_PROVIDER_ID;
   const run=(eventId:string,userId:string,data:string)=>processTopupPostback(db!,{webhookEventId:eventId,type:'postback',userId,data},{fetch:fakeFetch,allowlist:allow});
   const denied=await run('denied-synthetic',outsider,`topup:v2:review:APPROVED:${pending.id}`);assert.equal(denied.result,'FORBIDDEN');
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,100);
