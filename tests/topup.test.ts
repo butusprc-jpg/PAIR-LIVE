@@ -115,6 +115,8 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_member_notifications WHERE request_id=$1',[pending.id])).rows[0].n,1);
   assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[pending.id])).rows[0].status,'SENT');
   const count=seen.length;assert.equal((await run('confirm-synthetic',adminA,tokenA)).duplicate,true);
+  assert.equal((await run('review-synthetic',adminA,`topup:v2:review:APPROVED:${pending.id}`)).duplicate,true);
+  assert.ok(seen.at(-1)?.text.includes('ดำเนินการแล้ว'));
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,600);
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_chat_actions WHERE request_id=$1',[pending.id])).rows[0].n,4);
   assert.equal((await db.query("SELECT count(*)::int n FROM member_topup_chat_actions WHERE event_id='denied-synthetic' AND request_id IS NULL AND stage='DENIED'")).rows[0].n,1);
@@ -138,8 +140,13 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.equal((await run('reject-confirm',adminA,confirmationData(rejectRequest.id,'REJECTED',adminA))).result,'REJECTED');
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_member_notifications WHERE request_id=$1',[rejectRequest.id])).rows[0].n,0);
   const retryRequest=await createTopup(db,chatMember,25,randomUUID());
-  const failedLine=await processTopupPostback(db,{webhookEventId:'retry-review',type:'postback',userId:adminA,data:confirmationData(retryRequest.id,'APPROVED',adminA)},{allowlist:allow,fetch:async(_url,init)=>JSON.parse(String(init?.body)).to===memberLine?new Response('',{status:503}):new Response('',{status:200})});
-  assert.equal(failedLine.result,'APPROVED');
+  const approvalEvent={webhookEventId:'retry-review',type:'postback' as const,userId:adminA,data:confirmationData(retryRequest.id,'APPROVED',adminA)};
+  const failedDeliveries:string[]=[];
+  await assert.rejects(processTopupPostback(db,approvalEvent,{allowlist:allow,fetch:async(_url,init)=>{const payload=JSON.parse(String(init?.body));failedDeliveries.push(JSON.stringify(payload.messages[0]));return new Response('',{status:503})}}),/line_delivery_failed/);
+  assert.equal(failedDeliveries.filter(text=>text.includes('ดำเนินการเติมแต้มไม่สำเร็จ')).length,0);
+  const replay=await processTopupPostback(db,approvalEvent,{allowlist:allow,fetch:fakeFetch});
+  assert.equal(replay.duplicate,true);
+  assert.ok(seen.some(x=>x.to===adminA&&x.text.includes('ดำเนินการแล้ว')));
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,625);
   assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[retryRequest.id])).rows[0].status,'RETRY');
   await db.query('UPDATE member_topup_member_notifications SET next_attempt_at=now()-interval \'1 second\' WHERE request_id=$1',[retryRequest.id]);
