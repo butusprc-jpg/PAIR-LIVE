@@ -11,3 +11,5 @@ test('admin settings menu navigates from direct or LIFF-wrapped view without ext
  assert.equal(adminViewFromLiff('?view=administrator'),false);
  assert.equal(adminViewFromLiff('?liff.state=%3Fview%3Dhttps%3A%2F%2Fevil.example'),false);
 });
+
+test('withdrawal deep link is separate from wallet and topup',()=>{assert.equal(memberEntry('?entry=withdraw'),'withdraw');assert.equal(memberEntryFromLiff('?liff.state=%3Fentry%3Dwithdraw'),'withdraw');assert.equal(memberEntry('?entry=wallet'),'wallet');assert.equal(memberEntry('?entry=topup'),'topup')});
