@@ -45,14 +45,14 @@ function card(row:CardRow,title:string,bodyExtra:unknown[]=[],footer:unknown[]=[
   body:{type:'box',layout:'vertical',spacing:'md',contents:[{type:'text',text:'PAIR LIVE — '+title,weight:'bold',size:'lg',wrap:true},label('สมาชิก',name),label('จำนวนเติม',`${row.points.toLocaleString('th-TH')} แต้ม`),label('ส่งเมื่อ',when),label('เลขคำขอ',row.id),label('สถานะ',row.status),...bodyExtra]},
   ...(footer.length?{footer:{type:'box',layout:'vertical',spacing:'sm',contents:footer}}:{})}};
 }
-function button(text:string,data:string,style:'primary'|'secondary'='secondary'){return {type:'button',style,...(style==='primary'?{color:'#1763DC'}:{}),height:'sm',action:{type:'postback',label:text,data,displayText:text}}}
+function button(text:string,data:string,style:'primary'|'secondary'='secondary'){return {type:'button',style,...(style==='primary'?{color:'#1763DC'}:{}),height:'sm',action:{type:'postback',label:text,data}}}}
 export function requestCard(row:CardRow,slipUrl?:string,expired=false,manualChatSlip=false){
  const extra=slipUrl?[]:[{type:'text',text:expired?'ภาพหลักฐานในระบบหมดอายุแล้ว ตรวจสอบตามช่องทางที่ได้รับ':'ตรวจหลักฐานตามช่องทางที่ได้รับก่อนดำเนินการ',color:'#737B8C',size:'sm',wrap:true}];
- const message=card(row,'แจ้งเติมแต้ม',extra,[],slipUrl);
- return {...message,quickReply:{items:[
-  {type:'action',action:{type:'postback',label:'✅ อนุมัติ',data:reviewData(row.id,'APPROVED')}},
-  {type:'action',action:{type:'postback',label:'❌ ปฏิเสธ',data:reviewData(row.id,'REJECTED')}}
- ]}};
+ const footer=[
+  button(`✅ ยืนยัน ${row.points} แต้ม`,reviewData(row.id,'APPROVED'),'primary'),
+  button('❌ ปฏิเสธ',reviewData(row.id,'REJECTED'))
+ ];
+ return card(row,'แจ้งเติมแต้ม',extra,footer,slipUrl);
 }
 export function confirmationCard(row:CardRow,decision:Decision,actor:string){
  return card(row,decision==='APPROVED'?'ยืนยันการเติมแต้ม':'ยืนยันการปฏิเสธ',[{type:'text',text:'กดยืนยันเมื่อได้ตรวจสอบภาพสลิปที่ตรงกับเลขคำขอนี้แล้วเท่านั้น',size:'sm',wrap:true,color:'#B54138'}],[
