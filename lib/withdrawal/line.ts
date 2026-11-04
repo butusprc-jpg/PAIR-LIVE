@@ -15,10 +15,10 @@ export function withdrawalCard(row:{id:string;display_name:string;requested_poin
    {type:'text',text:`ถอน: ${row.requested_points.toLocaleString('th-TH')} แต้ม`,wrap:true},
    {type:'text',text:`ข้อมูลรับโอน: ${row.payout_details}`,wrap:true},
    {type:'text',text:`เลขคำขอ: ${row.id}`,size:'xs',wrap:true},
-   {type:'text',text:'ตรวจข้อมูลและโอนให้สมาชิกก่อนกด โอนแล้ว',size:'sm',wrap:true}
+   {type:'text',text:'ตรวจข้อมูลและโอนแต้มให้สมาชิกก่อนกด ยืนยัน',size:'sm',wrap:true}
   ]},
   footer:{type:'box',layout:'vertical',spacing:'sm',contents:[
-   {type:'button',style:'primary',color:'#1763DC',action:{type:'postback',label:'✅ โอนแล้ว ยืนยัน',data:`withdraw:v1:transfer:${row.id}`}},
+   {type:'button',style:'primary',color:'#1763DC',action:{type:'postback',label:'✅ ยืนยันโอนแต้มแล้ว',data:`withdraw:v1:transfer:${row.id}`}},
    {type:'button',style:'secondary',action:{type:'postback',label:'❌ ปฏิเสธ',data:`withdraw:v1:reject:${row.id}`}}
   ]}
  }};
@@ -48,7 +48,7 @@ export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch
   const message=row.purpose==='ADMIN_REQUEST'?
    (row.status==='PENDING'?withdrawalCard(row):{type:'text',text:`คำขอถอน ${row.requested_points} แต้ม · สถานะล่าสุด ${row.status}`})
    :{type:'text',text:row.purpose==='MEMBER_TRANSFERRED'?
-    `✅ โอนแล้ว · ${row.requested_points} แต้ม · เลขคำขอ ${row.request_id}`:
+    `✅ โอนแต้มแล้ว · ${row.requested_points} แต้ม · เลขคำขอ ${row.request_id}`:
     `❌ คำขอถอนแต้มถูกปฏิเสธ คืน ${row.requested_points} แต้มแล้ว · เลขคำขอ ${row.request_id}`};
   try{await pushLine(row.recipient_user_id,[message],row.id,opts.fetch)}
   catch(e){const code=e instanceof Error&&'status' in e?Number((e as {status:number}).status):503;status=(code===503||code===429||code>=500)&&row.attempts<5?'RETRY':'FAILED';error='line_delivery_failed'}
@@ -69,7 +69,7 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
  try{await dispatchWithdrawalLine(pool,{fetch:opts.fetch})}catch{/* Persisted notifications remain retryable. */}
  const message={type:'text',text:row.replayed?
   `รายการนี้ดำเนินการแล้ว · ${row.status} · ${row.requested_points} แต้ม`:
-  row.status==='TRANSFERRED'?`✅ บันทึกว่าโอนแล้ว · ${row.requested_points} แต้ม`:`❌ ปฏิเสธและคืน ${row.requested_points} แต้มแล้ว`};
+  row.status==='TRANSFERRED'?`✅ ยืนยันโอนแต้มแล้ว · ${row.requested_points} แต้ม`:`❌ ปฏิเสธและคืน ${row.requested_points} แต้มแล้ว`};
  await pushLine(event.userId,[message],event.webhookEventId,opts.fetch);
  return {result:row.status,replayed:row.replayed};
 }
