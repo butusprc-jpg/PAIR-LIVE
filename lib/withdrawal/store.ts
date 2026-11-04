@@ -19,7 +19,7 @@ export function validateDetails(value:unknown):string{
 }
 export async function listWithdrawals(pool:Pool,memberId:string){
  return scoped(pool,memberId,async c=>(await c.query(
-  'SELECT id,requested_points,payout_details,status,created_at FROM member_withdrawal_requests WHERE member_id=$1 ORDER BY created_at DESC LIMIT 30',[memberId])).rows);
+  'SELECT id,requested_points,payout_details,status,debit_timing,created_at FROM member_withdrawal_requests WHERE member_id=$1 ORDER BY created_at DESC LIMIT 30',[memberId])).rows);
 }
 export async function createWithdrawal(pool:Pool,memberId:string,points:unknown,detailsValue:unknown,key:unknown,recipients:string[]){
  const count=validatePoints(points);const details=validateDetails(detailsValue);
@@ -36,9 +36,8 @@ export async function createWithdrawal(pool:Pool,memberId:string,points:unknown,
   }
   if(await walletPathFromDatabase(c)!=='legacy')throw new TopupError('legacy_required',409);
   if(member.rows[0].demo_points<count)throw new TopupError('withdrawal_insufficient_points',409);
-  const row=(await c.query('INSERT INTO member_withdrawal_requests(member_id,requested_points,payout_details,idempotency_key) VALUES($1,$2,$3,$4) RETURNING *',[memberId,count,details,key])).rows[0];
-  // Hold points before admin's payout, preventing simultaneous over-withdrawals.
-  await c.query('UPDATE members SET demo_points=demo_points-$1,updated_at=now() WHERE id=$2',[count,memberId]);
+  const row=(await c.query("INSERT INTO member_withdrawal_requests(member_id,requested_points,payout_details,idempotency_key,debit_timing) VALUES($1,$2,$3,$4,'ON_APPROVAL') RETURNING *",[memberId,count,details,key])).rows[0];
+  await c.query("SELECT set_config('pair_live.topup_admin','true',true)");
   for(const id of new Set(recipients))await c.query("INSERT INTO member_withdrawal_line_outbox(request_id,recipient_user_id,purpose) VALUES($1,$2,'ADMIN_REQUEST') ON CONFLICT DO NOTHING",[row.id,id]);
   return {...row,replayed:false};
  });
@@ -52,7 +51,12 @@ export async function decideWithdrawal(pool:Pool,adminId:string,requestId:unknow
   if(!r)throw new TopupError('withdrawal_not_found',404);
   if(r.status!=='PENDING')return {...r,replayed:true};
   if(await walletPathFromDatabase(c)!=='legacy')throw new TopupError('legacy_required',409);
-  if(action==='REJECTED'){
+  if(action==='TRANSFERRED'&&r.debit_timing==='ON_APPROVAL'){
+   const m=(await c.query('SELECT demo_points FROM members WHERE id=$1 FOR UPDATE',[r.member_id])).rows[0];
+   if(!m||m.demo_points<r.requested_points)throw new TopupError('withdrawal_insufficient_points',409);
+   await c.query('UPDATE members SET demo_points=demo_points-$1,updated_at=now() WHERE id=$2',[r.requested_points,r.member_id]);
+  }
+  if(action==='REJECTED'&&r.debit_timing==='PREDEBIT'){
    const m=(await c.query('SELECT demo_points FROM members WHERE id=$1 FOR UPDATE',[r.member_id])).rows[0];
    if(!m||m.demo_points+r.requested_points>2147483647)throw new TopupError('balance_overflow',409);
    await c.query('UPDATE members SET demo_points=demo_points+$1,updated_at=now() WHERE id=$2',[r.requested_points,r.member_id]);

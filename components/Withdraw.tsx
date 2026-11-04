@@ -1,6 +1,6 @@
 'use client';
 import {useCallback,useEffect,useRef,useState} from 'react';
-type Withdrawal={id:string;requested_points:number;status:string;created_at:string};
+type Withdrawal={id:string;requested_points:number;status:string;debit_timing:'PREDEBIT'|'ON_APPROVAL';created_at:string};
 async function read(r:Response){const body=await r.json();if(!r.ok)throw new Error(body.error||'withdrawal_request_failed');return body}
 export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={}){
  const[balance,setBalance]=useState<number|null>(null),[points,setPoints]=useState(''),[details,setDetails]=useState('');
@@ -29,7 +29,7 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
   finally{lock.current=false;setBusy(false)}
  }
  return <section className="card" aria-label="ถอนแต้ม"><h2 id="wallet-dialog-title">ถอนแต้ม</h2>
-  <p className="muted">เมื่อส่งคำขอ ระบบพักแต้มที่ขอไว้ก่อน หากถูกปฏิเสธจะคืนแต้มอัตโนมัติ</p><p>แต้มพร้อมถอน: <b>{balance===null?'กำลังตรวจสอบ':balance.toLocaleString('th-TH')} แต้ม</b></p>
+  <p className="muted">ส่งคำขอแล้วแต้มยังไม่ถูกหัก แอดมินตรวจสอบและยืนยันจ่ายแต้มก่อนระบบจึงหักแต้ม</p><p>แต้มพร้อมถอน: <b>{balance===null?'กำลังตรวจสอบ':balance.toLocaleString('th-TH')} แต้ม</b></p>
   <label>ข้อมูลรับแต้ม (ไม่เกิน 50 ตัวอักษร)
    <input className="field" type="text" maxLength={50} value={details} disabled={busy} onChange={e=>setDetails(e.target.value)}/>
   </label>
@@ -40,6 +40,6 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
   <button className="primary" type="button" disabled={busy||(!valid&&!key.current)} onClick={submit}>{busy?'กำลังส่ง':'ส่งคำขอถอนแต้ม'}</button>
   <p role="status">{message}</p>
   <button className="secondary" type="button" disabled={busy} onClick={()=>load().catch(e=>setMessage((e as Error).message))}>ตรวจสถานะล่าสุด</button>
-  {rows.map(r=><article className="item" key={r.id}><b>{r.requested_points.toLocaleString('th-TH')} แต้ม</b><p>{r.status==='TRANSFERRED'?'จ่ายแต้มแล้ว':r.status==='REJECTED'?'ปฏิเสธและคืนแต้มแล้ว':'รอรับแต้ม'}</p><small>{r.id}</small></article>)}
+  {rows.map(r=><article className="item" key={r.id}><b>{r.requested_points.toLocaleString('th-TH')} แต้ม</b><p>{r.status==='TRANSFERRED'?'จ่ายแต้มแล้ว':r.status==='REJECTED'?(r.debit_timing==='PREDEBIT'?'ปฏิเสธและคืนแต้มแล้ว':'ปฏิเสธคำขอแล้ว'):'รอรับแต้ม'}</p><small>{r.id}</small></article>)}
  </section>
 }
