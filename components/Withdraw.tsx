@@ -23,7 +23,7 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
    if(!key.current){key.current=crypto.randomUUID();pending.current=current;sessionStorage.setItem('pair_withdrawal_pending',JSON.stringify({key:key.current,...current}))}
    const b=await read(await fetch('/api/member/withdrawals',{method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({...pending.current,idempotencyKey:key.current}),signal:AbortSignal.timeout(20000)}));
-   await load();setMessage('ส่งคำขอถอนแต้มเลขที่ '+b.request.id+' แล้ว รอแอดมินตรวจและโอน');
+   await load();setMessage('ส่งคำขอถอนแต้มเลขที่ '+b.request.id+' แล้ว รอแอดมินตรวจและโอนแต้ม');
    key.current=null;pending.current=null;sessionStorage.removeItem('pair_withdrawal_pending');setPoints('');setDetails('');
   }catch(e){try{await load()}catch{}setMessage((e as Error).message+' · ตรวจสถานะก่อนกดส่งซ้ำ')}
   finally{lock.current=false;setBusy(false)}
@@ -40,6 +40,6 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
   <button className="primary" type="button" disabled={busy||(!valid&&!key.current)} onClick={submit}>{busy?'กำลังส่ง':'ส่งคำขอถอนแต้ม'}</button>
   <p role="status">{message}</p>
   <button className="secondary" type="button" disabled={busy} onClick={()=>load().catch(e=>setMessage((e as Error).message))}>ตรวจสถานะล่าสุด</button>
-  {rows.map(r=><article className="item" key={r.id}><b>{r.requested_points.toLocaleString('th-TH')} แต้ม</b><p>{r.status==='TRANSFERRED'?'โอนแล้ว':r.status==='REJECTED'?'ปฏิเสธและคืนแต้มแล้ว':'รอโอน'}</p><small>{r.id}</small></article>)}
+  {rows.map(r=><article className="item" key={r.id}><b>{r.requested_points.toLocaleString('th-TH')} แต้ม</b><p>{r.status==='TRANSFERRED'?'โอนแต้มแล้ว':r.status==='REJECTED'?'ปฏิเสธและคืนแต้มแล้ว':'รอโอนแต้ม'}</p><small>{r.id}</small></article>)}
  </section>
 }
