@@ -9,7 +9,7 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
  const load=useCallback(async()=>{const b=await read(await fetch('/api/member/withdrawals',{cache:'no-store'}));setBalance(b.balance);onBalance?.(b.balance);setRows(b.requests);return b},[onBalance]);
  useEffect(()=>{try{const saved=sessionStorage.getItem('pair_withdrawal_pending');if(saved){const value=JSON.parse(saved);key.current=value.key;pending.current={points:value.points,details:value.details};setPoints(String(value.points));setDetails(value.details)}}catch{}
   load().catch(e=>setMessage((e as Error).message));
-  const refresh=()=>{load().catch(()=>{})};window.addEventListener('focus',refresh);return()=>window.removeEventListener('focus',refresh)
+  const refresh=()=>{load().catch(()=>{})};window.addEventListener('focus',refresh);const timer=window.setInterval(refresh,10000);return()=>{window.removeEventListener('focus',refresh);window.clearInterval(timer)}
  },[load]);
  const quantity=Number(points);
  const valid=Number.isSafeInteger(quantity)&&quantity>=1&&balance!==null&&quantity<=balance&&details.trim().length>=1&&Array.from(details.trim()).length<=50&&details.length<=50;
