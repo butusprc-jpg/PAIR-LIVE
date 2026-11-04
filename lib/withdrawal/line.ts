@@ -61,7 +61,7 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
  const match=/^withdraw:v1:(transfer|reject):([0-9a-f-]{36})$/i.exec(event.data);
  if(!match)return {result:'INVALID'};
  const admin=await verifiedLineAdmin(pool,event.userId,opts.allowlist);
- if(!admin)return {result:'FORBIDDEN'};
+ if(!admin){console.error('withdraw_admin_not_verified');return {result:'FORBIDDEN'}};
  // Request-level locks and the immutable unique audit are authoritative against replay.
  const decision=match[1]==='transfer'?'TRANSFERRED':'REJECTED';
  const row=await decideWithdrawal(pool,admin.id,match[2],decision);
