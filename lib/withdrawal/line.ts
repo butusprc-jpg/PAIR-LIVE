@@ -27,8 +27,8 @@ export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch
  const rows=await scoped(pool,async c=>(await c.query<QueueRow>(`
   WITH candidate AS (
    SELECT id FROM member_withdrawal_line_outbox
-   WHERE (status IN ('PENDING','RETRY') AND next_attempt_at<=now())
-     OR (status='PROCESSING' AND lease_until<now())
+   WHERE ((status IN ('PENDING','RETRY') AND next_attempt_at<=now())
+     OR (status='PROCESSING' AND lease_until<now()))
    AND attempts<5
    ORDER BY next_attempt_at,id FOR UPDATE SKIP LOCKED LIMIT 10
   )
