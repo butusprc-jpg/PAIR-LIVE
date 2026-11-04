@@ -10,7 +10,7 @@ import {imageType} from '../lib/topup/qr';
 import {validateSlip} from '../lib/topup/slip';
 import {lineAdminRecipients,dispatchTopupLine} from '../lib/topup/line-notify';
 import {processTopupPostback} from '../lib/topup/line-postback';
-import {confirmationData} from '../lib/topup/line-card';
+import {dispatchApprovedMemberLine} from '../lib/topup/member-line-notify';
 import {cleanupTopupTemporary} from '../lib/topup/retention';
 import {historyCsv,historySummary,historyFilter} from '../lib/topup/export';
 test('LINE admin recipients only include validated admin roles',()=>{
@@ -53,7 +53,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  process.env.LINE_LOGIN_PROVIDER_ID='synthetic-provider';process.env.LINE_MESSAGING_PROVIDER_ID='synthetic-provider';
  assert.equal(captures.length,1);
  assert.match(String(captures[0].init.body),/32 แต้ม/);
- assert.match(String(captures[0].init.body),/ภาพสลิปโหลดไม่ได้/);
+ assert.match(String(captures[0].init.body),/ตรวจหลักฐานตามช่องทางที่ได้รับ/);
  assert.equal((await db.query("SELECT status FROM member_topup_line_notifications WHERE request_id=$1",[verified.id])).rows[0].status,'SENT');
  assert.equal((await dispatchTopupLine(db,{token:'synthetic-test-token',fetch:async()=>{throw new Error('unexpected_duplicate')}})).sent,0);
  const imageKey=randomUUID();const imageRequest=await createTopupWithSlip(db,member,31,imageKey,{objectKey:'topup-slips/'+member+'/'+imageKey,type:'image/png',sha:'f'.repeat(64)},[lineRecipient]);
@@ -79,23 +79,49 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   const adminA='U'+'a'.repeat(32),adminB='U'+'b'.repeat(32),outsider='U'+'c'.repeat(32);
   const realAdmins=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name) VALUES('line','test',$1,'Admin A'),('line','test',$2,'Admin B') RETURNING id",[adminA,adminB])).rows;
   const chatMember=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Synthetic chat member',100) RETURNING id")).rows[0].id;
+  const memberLine='U'+'d'.repeat(32);
+  await db.query("INSERT INTO member_identities(member_id,provider,provider_channel_id,provider_user_id) VALUES($1,'line','test',$2)",[chatMember,memberLine]);
   const pending=await createTopup(db,chatMember,500,randomUUID());
-  const seen:string[]=[];const fakeFetch:typeof fetch=async(_url,init)=>{seen.push(String(init?.body));return new Response('',{status:200})};
+  const seen:{to:string;text:string}[]=[];const fakeFetch:typeof fetch=async(_url,init)=>{const payload=JSON.parse(String(init?.body));seen.push({to:payload.to,text:payload.messages[0].text});return new Response('',{status:200})};
   const allow=JSON.stringify([{userId:adminA,role:'admin'},{userId:adminB,role:'admin'},{userId:outsider,role:'viewer'}]);
   const run=(eventId:string,userId:string,data:string)=>processTopupPostback(db!,{webhookEventId:eventId,type:'postback',userId,data},{fetch:fakeFetch,allowlist:allow});
-  const review=await run('review-synthetic',adminA,`topup:v2:review:APPROVED:${pending.id}`);assert.equal(review.result,'AWAITING_CONFIRMATION');
-  const tampered=await run('denied-synthetic',outsider,confirmationData(pending.id,'APPROVED',adminA));assert.equal(tampered.result,'FORBIDDEN');
+  const denied=await run('denied-synthetic',outsider,`topup:v2:review:APPROVED:${pending.id}`);assert.equal(denied.result,'FORBIDDEN');
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,100);
-  const [first,second]=await Promise.all([run('confirm-synthetic-a',adminA,confirmationData(pending.id,'APPROVED',adminA)),run('confirm-synthetic-b',adminB,confirmationData(pending.id,'APPROVED',adminB))]);
+  const [first,second]=await Promise.all([run('review-synthetic',adminA,`topup:v2:review:APPROVED:${pending.id}`),run('review-synthetic-b',adminB,`topup:v2:review:APPROVED:${pending.id}`)]);
   assert.deepEqual([first.result,second.result].sort(),['ALREADY_HANDLED','APPROVED']);
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,600);
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[pending.id])).rows[0].n,1);
-  const count=seen.length;assert.equal((await run('confirm-synthetic-a',adminA,confirmationData(pending.id,'APPROVED',adminA))).duplicate,true);assert.equal(seen.length,count);
-  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_chat_actions WHERE request_id=$1',[pending.id])).rows[0].n,3);
+  assert.deepEqual(seen,[{to:memberLine,text:'✅ เติมจำนวน 500 แต้มที่ต้องการแล้ว'}]);
+  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_member_notifications WHERE request_id=$1',[pending.id])).rows[0].n,1);
+  assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[pending.id])).rows[0].status,'SENT');
+  const count=seen.length;assert.equal((await run('review-synthetic',adminA,`topup:v2:review:APPROVED:${pending.id}`)).duplicate,true);assert.equal(seen.length,count);
+  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_chat_actions WHERE request_id=$1',[pending.id])).rows[0].n,2);
   assert.equal((await db.query("SELECT count(*)::int n FROM member_topup_chat_actions WHERE event_id='denied-synthetic' AND request_id IS NULL AND stage='DENIED'")).rows[0].n,1);
   await assert.rejects(db.query('UPDATE member_topup_chat_actions SET result=$1 WHERE event_id=$2',['fake','review-synthetic']),/topup_immutable/);
   assert.equal((await db.query('SELECT phase,enabled,ever_cutover FROM member_wallet_runtime_state WHERE id=1')).rows[0].phase,'LEGACY');
   assert.ok(realAdmins.length===2);
+  const noLineMember=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('No LINE member',40) RETURNING id")).rows[0].id;
+  const noLineRequest=await createTopup(db,noLineMember,15,randomUUID());
+  assert.equal((await run('no-line-review',adminA,`topup:v2:review:APPROVED:${noLineRequest.id}`)).result,'APPROVED');
+  assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[noLineMember])).rows[0].demo_points,55);
+  assert.deepEqual((await db.query('SELECT recipient_user_id,status FROM member_topup_member_notifications WHERE request_id=$1',[noLineRequest.id])).rows[0],{recipient_user_id:null,status:'FAILED'});
+  const adminLinkedMember=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Admin-linked member',10) RETURNING id")).rows[0].id;
+  await db.query("INSERT INTO member_identities(member_id,provider,provider_channel_id,provider_user_id) VALUES($1,'line','test',$2)",[adminLinkedMember,adminA]);
+  const adminLinkedRequest=await createTopup(db,adminLinkedMember,11,randomUUID());
+  assert.equal((await run('admin-linked-review',adminB,`topup:v2:review:APPROVED:${adminLinkedRequest.id}`)).result,'APPROVED');
+  assert.deepEqual((await db.query('SELECT recipient_user_id,status FROM member_topup_member_notifications WHERE request_id=$1',[adminLinkedRequest.id])).rows[0],{recipient_user_id:null,status:'FAILED'});
+  const rejectRequest=await createTopup(db,chatMember,20,randomUUID());
+  assert.equal((await run('reject-review',adminA,`topup:v2:review:REJECTED:${rejectRequest.id}`)).result,'REJECTED');
+  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_member_notifications WHERE request_id=$1',[rejectRequest.id])).rows[0].n,0);
+  const retryRequest=await createTopup(db,chatMember,25,randomUUID());
+  const failedLine=await processTopupPostback(db,{webhookEventId:'retry-review',type:'postback',userId:adminA,data:`topup:v2:review:APPROVED:${retryRequest.id}`},{allowlist:allow,fetch:async()=>new Response('',{status:503})});
+  assert.equal(failedLine.result,'APPROVED');
+  assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,625);
+  assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[retryRequest.id])).rows[0].status,'RETRY');
+  await db.query('UPDATE member_topup_member_notifications SET next_attempt_at=now()-interval \'1 second\' WHERE request_id=$1',[retryRequest.id]);
+  assert.equal((await dispatchApprovedMemberLine(db,{token:'synthetic-token',fetch:fakeFetch})).sent,1);
+  assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[retryRequest.id])).rows[0].status,'SENT');
+  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[retryRequest.id])).rows[0].n,1);
  }finally{for(const [key,value] of Object.entries({LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:prior.token,LINE_LOGIN_CHANNEL_ID:prior.login,LINE_MESSAGING_CHANNEL_ID:prior.messaging,TOPUP_IMAGE_SIGNING_SECRET:prior.secret})){if(value===undefined)delete process.env[key];else process.env[key]=value}}
  // V3 retention: only enrolled, due, unheld slips are deleted. Accounting rows survive.
  const past=new Date(Date.now()-86400000-60000);
@@ -108,7 +134,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_requests WHERE id=$1',[verified.id])).rows[0].n,1);
  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[id])).rows[0].n,1);
  const f=historyFilter(new URLSearchParams('period=all&status=APPROVED'));
- const summary=await historySummary(db,f);assert.equal(summary.count,2);
+ const summary=await historySummary(db,f);assert.equal(summary.count,5);
  const csvBytes=new Uint8Array(await Promise.race([new Response(historyCsv(db,f)).arrayBuffer(),new Promise<never>((_,reject)=>setTimeout(()=>reject(Error('csv_stream_timeout')),10000))]));assert.deepEqual([...csvBytes.slice(0,3)],[239,187,191]);
  const exported=new TextDecoder().decode(csvBytes);assert.match(exported,/Synthetic topup member/);assert.doesNotMatch(exported,/topup-slips\//);
  assert.equal((await listTopups(db,other)).length,0);await assert.rejects(decideTopup(db,randomUUID(),rollback.id,'APPROVED',''),/admin_forbidden/);
@@ -119,4 +145,4 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  }finally{for(const k of ['LINE_LOGIN_PROVIDER_ID','LINE_MESSAGING_PROVIDER_ID','LINE_LOGIN_CHANNEL_ID','LINE_MESSAGING_CHANNEL_ID'])delete process.env[k];await db?.end();await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await pool.end()}
 });
 
-test('request card without slip requires manual chat verification and contains no approval actions',async()=>{const {requestCard}=await import('../lib/topup/line-card');const card=requestCard({id:randomUUID(),displayName:'Synthetic Member',points:50,status:'รอตรวจสอบ',createdAt:new Date()});const json=JSON.stringify(card);assert.match(json,/ภาพสลิปโหลดไม่ได้/);assert.doesNotMatch(json,/topup:v2:review/);const manual=JSON.stringify(requestCard({id:randomUUID(),displayName:'Synthetic Member',points:50,status:'รอตรวจสอบ',createdAt:new Date()},undefined,false,true));assert.match(manual,/topup:v2:review/);assert.match(manual,/ต้องตรวจภาพสลิป/)});
+test('request card without slip offers one-tap postback Quick Reply and neutral evidence guidance',async()=>{const {requestCard}=await import('../lib/topup/line-card');const card=requestCard({id:randomUUID(),displayName:'Synthetic Member',points:50,status:'รอตรวจสอบ',createdAt:new Date()});const json=JSON.stringify(card);assert.match(json,/ตรวจหลักฐานตามช่องทางที่ได้รับ/);assert.match(json,/topup:v2:review:APPROVED/);assert.match(json,/topup:v2:review:REJECTED/);assert.doesNotMatch(json,/displayText|ต้องตรวจภาพสลิป/)});

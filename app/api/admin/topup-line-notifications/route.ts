@@ -1,6 +1,7 @@
 import {adminAccess} from '../../../../lib/server/admin-auth';
 import {database} from '../../../../lib/server/db';
 import {dispatchTopupLine,topupLineDeliverySummary} from '../../../../lib/topup/line-notify';
+import {dispatchApprovedMemberLine} from '../../../../lib/topup/member-line-notify';
 import {noStore} from '../../../../lib/topup/http';
 import {linePreflight} from '../../../../lib/line-preflight';
 export const runtime='nodejs';
@@ -14,6 +15,6 @@ export async function GET(request:Request){
 export async function POST(request:Request){
  const a=await adminAccess(request,['admin'],true);
  if(!a.ok)return Response.json({error:a.error},{status:403,headers:noStore});
- try{return Response.json({result:await dispatchTopupLine(database())},{headers:noStore})}
+ try{return Response.json({result:await dispatchTopupLine(database()),members:await dispatchApprovedMemberLine(database())},{headers:noStore})}
  catch{return Response.json({error:'notification_retry_failed'},{status:503,headers:noStore})}
 }
