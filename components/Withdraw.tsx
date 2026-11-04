@@ -2,11 +2,11 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 type Withdrawal={id:string;requested_points:number;status:string;created_at:string};
 async function read(r:Response){const body=await r.json();if(!r.ok)throw new Error(body.error||'withdrawal_request_failed');return body}
-export function MemberWithdraw(){
+export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={}){
  const[balance,setBalance]=useState<number|null>(null),[points,setPoints]=useState(''),[details,setDetails]=useState('');
  const[rows,setRows]=useState<Withdrawal[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
  const key=useRef<string|null>(null),pending=useRef<{points:number;details:string}|null>(null),lock=useRef(false);
- const load=useCallback(async()=>{const b=await read(await fetch('/api/member/withdrawals',{cache:'no-store'}));setBalance(b.balance);setRows(b.requests);return b},[]);
+ const load=useCallback(async()=>{const b=await read(await fetch('/api/member/withdrawals',{cache:'no-store'}));setBalance(b.balance);onBalance?.(b.balance);setRows(b.requests);return b},[onBalance]);
  useEffect(()=>{try{const saved=sessionStorage.getItem('pair_withdrawal_pending');if(saved){const value=JSON.parse(saved);key.current=value.key;pending.current={points:value.points,details:value.details};setPoints(String(value.points));setDetails(value.details)}}catch{}
   load().catch(e=>setMessage((e as Error).message));
   const refresh=()=>{load().catch(()=>{})};window.addEventListener('focus',refresh);return()=>window.removeEventListener('focus',refresh)
@@ -29,7 +29,7 @@ export function MemberWithdraw(){
   finally{lock.current=false;setBusy(false)}
  }
  return <section className="card" aria-label="ถอนแต้ม"><h2 id="wallet-dialog-title">ถอนแต้ม</h2>
-  <p>แต้มพร้อมถอน: <b>{balance===null?'กำลังตรวจสอบ':balance.toLocaleString('th-TH')} แต้ม</b></p>
+  <p className="muted">เมื่อส่งคำขอ ระบบพักแต้มที่ขอไว้ก่อน หากถูกปฏิเสธจะคืนแต้มอัตโนมัติ</p><p>แต้มพร้อมถอน: <b>{balance===null?'กำลังตรวจสอบ':balance.toLocaleString('th-TH')} แต้ม</b></p>
   <label>ข้อมูลรับโอน (ไม่เกิน 50 ตัวอักษร)
    <input className="field" type="text" maxLength={50} value={details} disabled={busy} onChange={e=>setDetails(e.target.value)}/>
   </label>
