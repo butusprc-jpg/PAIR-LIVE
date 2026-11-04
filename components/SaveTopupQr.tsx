@@ -3,13 +3,12 @@ import {useEffect,useRef,useState} from 'react';
 
 const qrUrl='/api/member/topup-qr';
 type Props={version:number};
-function onIOS(){return /iPad|iPhone|iPod/i.test(navigator.userAgent)}
 function extension(type:string){return type==='image/png'?'png':type==='image/webp'?'webp':'jpg'}
 
 /**
  * A LIFF page is a browser WebView, not a native app: it cannot write
- * directly into Photos/Gallery. Trigger the system share sheet where
- * file sharing is available; otherwise request a real HTTP download.
+ * directly into Photos/Gallery. Trigger the system share sheet on both
+ * Android and iOS when available; otherwise request an HTTP download.
  * No enlarged image or long-press flow.
  */
 export function SaveTopupQr({version}:Props){
@@ -29,19 +28,21 @@ export function SaveTopupQr({version}:Props){
  function save(){
   setMessage('');
   // Web Share must be called immediately in the click handler.
-  // On iOS this offers system actions, possibly including Save Image.
-  if(onIOS()&&file&&typeof navigator.share==='function'&&navigator.canShare?.({files:[file]})){
-   void navigator.share({files:[file],title:'PAIR LIVE QR'}).catch((e:unknown)=>{
+  // On supported iOS/Android browsers this offers system actions, possibly including Save Image.
+  if(file&&typeof navigator.share==='function'&&navigator.canShare?.({files:[file]})){
+   void navigator.share({files:[file],title:'PAIR LIVE QR'}).then(()=>{
+    setMessage('ส่งภาพให้ระบบแชร์ของมือถือแล้ว โปรดเลือกบันทึกภาพ');
+   }).catch((e:unknown)=>{
     if(e instanceof Error&&e.name==='AbortError')return;
     linkRef.current?.click();
-    setMessage('ส่งคำสั่งดาวน์โหลดแล้ว โปรดตรวจแอปไฟล์หรือรายการดาวน์โหลด');
+    setMessage('เมนูแชร์ใช้ไม่ได้ ระบบได้ลองส่งไฟล์ดาวน์โหลด โปรดตรวจรายการดาวน์โหลด');
    });
    return;
   }
-  // Android and desktop: direct authenticated HTTP attachment (not blob:).
-  // Android's Download Manager may save to Downloads, not Gallery.
+  // Unsupported WebViews and desktop: direct authenticated HTTP attachment.
+  // This may go to Downloads and cannot guarantee a Gallery save.
   linkRef.current?.click();
-  setMessage('ส่งคำสั่งดาวน์โหลดแล้ว ตรวจโฟลเดอร์ Downloads ของเครื่อง');
+  setMessage('ส่งคำสั่งดาวน์โหลดแล้ว หากเปิดผ่าน LINE และยังไม่มีไฟล์ ต้องใช้เบราว์เซอร์ภายนอก');
  }
  return <div>
   <button className="secondary" type="button" onClick={save}>SAVE QR CODE</button>
