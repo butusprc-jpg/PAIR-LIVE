@@ -86,7 +86,8 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,600);
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[pending.id])).rows[0].n,1);
   const count=seen.length;assert.equal((await run('confirm-synthetic-a',adminA,confirmationData(pending.id,'APPROVED',adminA))).duplicate,true);assert.equal(seen.length,count);
-  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_chat_actions WHERE request_id=$1',[pending.id])).rows[0].n,4);
+  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_chat_actions WHERE request_id=$1',[pending.id])).rows[0].n,3);
+  assert.equal((await db.query("SELECT count(*)::int n FROM member_topup_chat_actions WHERE event_id='denied-synthetic' AND request_id IS NULL AND stage='DENIED'")).rows[0].n,1);
   await assert.rejects(db.query('UPDATE member_topup_chat_actions SET result=$1 WHERE event_id=$2',['fake','review-synthetic']),/topup_immutable/);
   assert.equal((await db.query('SELECT phase,enabled,ever_cutover FROM member_wallet_runtime_state WHERE id=1')).rows[0].phase,'LEGACY');
   assert.ok(realAdmins.length===2);
