@@ -57,7 +57,7 @@ export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch
  }
  return {sent,retry,failed};
 }
-export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:string;userId:string;data:string},opts:{fetch?:typeof fetch;allowlist?:string}={}){
+export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:string;userId:string;data:string;replyToken?:string},opts:{fetch?:typeof fetch;allowlist?:string}={}){
  const match=/^withdraw:v1:(transfer|reject):([0-9a-f-]{36})$/i.exec(event.data);
  if(!match)return {result:'INVALID'};
  const admin=await verifiedLineAdmin(pool,event.userId,opts.allowlist);
