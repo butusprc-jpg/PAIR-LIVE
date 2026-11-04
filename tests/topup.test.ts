@@ -95,7 +95,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,600);
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[pending.id])).rows[0].n,1);
   assert.equal(seen.filter(x=>x.to===memberLine&&x.text.includes('500 แต้ม')).length,1);
-  assert.ok(seen.some(x=>x.to===adminA&&x.text.includes('อนุมัติเติมแต้มสำเร็จ')));
+  assert.ok(seen.some(x=>x.to===adminA&&x.text.includes('อนุมัติแล้ว')));
   assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[pending.id])).rows[0].status,'SENT');
   assert.equal((await run('review-synthetic',adminA,`topup:v2:review:APPROVED:${pending.id}`)).duplicate,true);
   assert.equal((await run('review-stale',adminA,`topup:v2:review:APPROVED:${pending.id}`)).result,'ALREADY_HANDLED');
@@ -125,7 +125,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.equal(failedDeliveries.filter(text=>text.includes('ดำเนินการเติมแต้มไม่สำเร็จ')).length,0);
   const replay=await processTopupPostback(db,approvalEvent,{allowlist:allow,fetch:fakeFetch});
   assert.equal(replay.duplicate,true);
-  assert.ok(seen.some(x=>x.to===adminA&&x.text.includes('อนุมัติเติมแต้มสำเร็จ')));
+  assert.ok(seen.some(x=>x.to===adminA&&x.text.includes('อนุมัติแล้ว')));
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,625);
   assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[retryRequest.id])).rows[0].status,'RETRY');
   await db.query('UPDATE member_topup_member_notifications SET next_attempt_at=now()-interval \'1 second\' WHERE request_id=$1',[retryRequest.id]);
