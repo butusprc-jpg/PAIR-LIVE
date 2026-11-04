@@ -57,7 +57,7 @@ export async function dispatchTopupLine(pool:Pool,opts:{token?:string;fetch?:typ
    }catch(e){slipUrl=undefined;expired=e instanceof Error&&e.message==='slip_expired'}
   }
   let result:{status:'ACCEPTED'|'TEMPORARY_ERROR'|'PERMANENT_ERROR';code?:string;retryAfterMs?:number};
-  try{await pushLine(row.recipient_user_id,[requestCard(rowData,slipUrl,expired)],row.id,opts.fetch,token);result={status:'ACCEPTED'}}
+  try{await pushLine(row.recipient_user_id,[requestCard(rowData,slipUrl,expired,!row.has_slip)],row.id,opts.fetch,token);result={status:'ACCEPTED'}}
   catch(e){result={status:e instanceof Error&&'status' in e&&(e as {status:number}).status===422?'PERMANENT_ERROR':'TEMPORARY_ERROR',code:e instanceof Error?e.message:'line_transport'}}
   let status:'SENT'|'RETRY'|'FAILED';
   if(result.status==='ACCEPTED'){status='SENT';sent++}

@@ -46,13 +46,13 @@ function card(row:CardRow,title:string,bodyExtra:unknown[]=[],footer:unknown[]=[
   ...(footer.length?{footer:{type:'box',layout:'vertical',spacing:'sm',contents:footer}}:{})}};
 }
 function button(text:string,data:string,style:'primary'|'secondary'='secondary'){return {type:'button',style,...(style==='primary'?{color:'#1763DC'}:{}),height:'sm',action:{type:'postback',label:text,data,displayText:text}}}
-export function requestCard(row:CardRow,slipUrl?:string,expired=false){
- const footer=slipUrl?[button(`✅ ยืนยัน ${row.points} แต้ม`,reviewData(row.id,'APPROVED'),'primary'),button('❌ ปฏิเสธ',reviewData(row.id,'REJECTED'))]:[];
- const extra=slipUrl?[]:[{type:'text',text:expired?'ภาพสลิปหมดอายุแล้ว กรุณาตรวจสอบตามกระบวนการก่อนดำเนินการ' :'⚠️ รอสลิปจากสมาชิกทางแชต LINE กรุณาตรวจสอบสลิปก่อนอนุมัติ',color:'#B54138',size:'sm',wrap:true}];
+export function requestCard(row:CardRow,slipUrl?:string,expired=false,manualChatSlip=false){
+ const footer=slipUrl||manualChatSlip?[button(`✅ ยืนยัน ${row.points} แต้ม`,reviewData(row.id,'APPROVED'),'primary'),button('❌ ปฏิเสธ',reviewData(row.id,'REJECTED'))]:[];
+ const extra=slipUrl?[]:[{type:'text',text:manualChatSlip?'⚠️ รอสลิปจากสมาชิกทางแชต LINE ต้องตรวจภาพสลิปที่ตรงกับเลขคำขอก่อนกดอนุมัติ':expired?'ภาพสลิปหมดอายุแล้ว กรุณาตรวจสอบตามกระบวนการก่อนดำเนินการ':'⚠️ ภาพสลิปโหลดไม่ได้ กรุณาตรวจสอบในระบบก่อนดำเนินการ',color:'#B54138',size:'sm',wrap:true}];
  return card(row,'แจ้งเติมแต้ม',extra,footer,slipUrl);
 }
 export function confirmationCard(row:CardRow,decision:Decision,actor:string){
- return card(row,decision==='APPROVED'?'ยืนยันการเติมแต้ม':'ยืนยันการปฏิเสธ',[],[
+ return card(row,decision==='APPROVED'?'ยืนยันการเติมแต้ม':'ยืนยันการปฏิเสธ',[{type:'text',text:'กดยืนยันเมื่อได้ตรวจสอบภาพสลิปที่ตรงกับเลขคำขอนี้แล้วเท่านั้น',size:'sm',wrap:true,color:'#B54138'}],[
  button(decision==='APPROVED'?`ยืนยันการอนุมัติ ${row.points} แต้ม`:'ยืนยันการปฏิเสธ',confirmationData(row.id,decision,actor),'primary'),button('ยกเลิก','topup:v2:cancel')]);
 }
 export function resultMessage(row:CardRow,decision:Decision,adminName:string,already=false){
