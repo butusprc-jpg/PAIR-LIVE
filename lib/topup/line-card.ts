@@ -49,7 +49,7 @@ function button(text:string,data:string,style:'primary'|'secondary'='secondary')
 export function requestCard(row:CardRow,slipUrl?:string,expired=false,manualChatSlip=false){
  const extra=slipUrl?[]:[{type:'text',text:expired?'ภาพหลักฐานในระบบหมดอายุแล้ว ตรวจสอบตามช่องทางที่ได้รับ':'ตรวจหลักฐานตามช่องทางที่ได้รับก่อนดำเนินการ',color:'#737B8C',size:'sm',wrap:true}];
  const footer=[
-  {type:'button',style:'primary',color:'#1763DC',height:'sm',action:{type:'uri',label:`ตรวจสลิป · ${row.points} แต้ม`,uri:`${(process.env.NEXT_PUBLIC_APP_BASE_URL||'https://pair-live.vercel.app').replace(/\/$/,'')}/admin/topup-review?id=${row.id}`}},
+  button(`✅ ยืนยัน ${row.points} แต้ม`,reviewData(row.id,'APPROVED'),'primary'),
   button('❌ ปฏิเสธ',reviewData(row.id,'REJECTED'))
  ];
  return card(row,'แจ้งเติมแต้ม',extra,footer,slipUrl);
