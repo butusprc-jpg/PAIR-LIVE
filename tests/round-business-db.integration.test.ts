@@ -1,0 +1,67 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {database} from '../lib/server/db';
+import {businessSettingsOverview,shopStatusAt,updateBusinessSetting} from '../lib/rounds/business-settings';
+import {RoundError} from '../lib/rounds/core';
+import {submitDemoEntry,tickRoundEngine,updateRoundSettings} from '../lib/rounds/store';
+
+test('Bangkok shop hours include overnight windows',()=>{
+ const hours={open:'22:00',close:'02:00'};
+ assert.equal(shopStatusAt(hours,'2026-11-04T15:00:00Z'),'OPEN');
+ assert.equal(shopStatusAt(hours,'2026-11-04T16:00:00Z'),'OPEN');
+ assert.equal(shopStatusAt(hours,'2026-11-04T18:30:00Z'),'OPEN');
+ assert.equal(shopStatusAt(hours,'2026-11-04T19:00:00Z'),'CLOSED');
+ assert.equal(shopStatusAt(hours,'2026-11-04T20:00:00Z'),'CLOSED');
+ assert.equal(shopStatusAt(null,'2026-11-04T20:00:00Z'),'UNCONFIGURED');
+});
+test('business settings are persisted, next-round only, and cap concurrent entries atomically',{skip:!process.env.DATABASE_URL||process.env.PAIR_BUSINESS_TEST_ISOLATED!=='1'},async()=>{
+ const {assertTestTarget}=await import('../lib/migration-manifest');assertTestTarget(process.env.DATABASE_URL);
+ const db=database();
+ try{
+  await db.query('TRUNCATE round_audit_logs,rounds CASCADE');
+  await db.query('UPDATE round_settings SET duration_minutes=5 WHERE id=1');
+  const members=(await db.query("INSERT INTO members(display_name) VALUES('Business fixture A'),('Business fixture B') RETURNING id")).rows.map(row=>row.id as string);
+  const start=await businessSettingsOverview();
+  assert.deepEqual(start.settings,{sideDifferenceLimit:null,maxRoundPoints:null,minRoundPoints:null,adminFeeRate:null,shopHours:null});
+  const first=(await tickRoundEngine()).round!;
+  await updateBusinessSetting('sideDifferenceLimit',2);
+  await updateBusinessSetting('maxRoundPoints',10);
+  await updateBusinessSetting('minRoundPoints',9);
+  await updateBusinessSetting('adminFeeRate','1.25');
+  const saved=await businessSettingsOverview();
+  assert.deepEqual(saved.settings,{sideDifferenceLimit:2,maxRoundPoints:10,minRoundPoints:9,adminFeeRate:'1.25',shopHours:null});
+  assert.equal(saved.currentRound?.minRoundPoints,null);
+  await submitDemoEntry(members[0],first.id,{side:'even',demoPoints:11,idempotencyKey:randomUUID()});
+  assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[members[0]])).rows[0].demo_points,1239);
+  assert.equal((await businessSettingsOverview()).currentRound?.differencePoints,11);
+  const bangkok=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',hour:'2-digit',hourCycle:'h23'}).format(new Date());
+  const open=String((Number(bangkok)+2)%24).padStart(2,'0')+':00',close=String((Number(bangkok)+3)%24).padStart(2,'0')+':00';
+  await updateBusinessSetting('shopHours',{open,close});
+  assert.equal((await businessSettingsOverview()).shopStatus,'CLOSED');
+  assert.equal((await tickRoundEngine()).round?.id,first.id);
+  await db.query("UPDATE rounds SET status='SETTLED',settled_at=clock_timestamp() WHERE id=$1",[first.id]);
+  assert.equal((await tickRoundEngine()).round,null);
+  await updateBusinessSetting('shopHours',null);
+  const second=(await tickRoundEngine()).round!;
+  assert.notEqual(second.id,first.id);
+  assert.equal((await businessSettingsOverview()).currentRound?.minRoundPoints,9);
+  await updateBusinessSetting('minRoundPoints',8);
+  assert.equal((await businessSettingsOverview()).currentRound?.minRoundPoints,9);
+  const before=(await db.query('SELECT sum(demo_points)::int AS total FROM members WHERE id=ANY($1::uuid[])',[members])).rows[0].total;
+  const results=await Promise.allSettled(members.map(memberId=>submitDemoEntry(memberId,second.id,{side:'even',demoPoints:6,idempotencyKey:randomUUID()})));
+  assert.equal(results.filter(result=>result.status==='fulfilled').length,1);
+  assert.equal(results.filter(result=>result.status==='rejected'&&result.reason instanceof RoundError&&result.reason.code==='round_points_limit_exceeded').length,1);
+  const after=(await db.query('SELECT sum(demo_points)::int AS total FROM members WHERE id=ANY($1::uuid[])',[members])).rows[0].total;
+  assert.equal(before-after,6);
+  assert.equal((await businessSettingsOverview()).currentRound?.totalPoints,6);
+  await assert.rejects(updateBusinessSetting('minRoundPoints',11),error=>error instanceof RoundError&&error.code==='invalid_round_total_range');
+  await assert.rejects(updateBusinessSetting('shopHours',{open:'12:00',close:'12:00'}),error=>error instanceof RoundError&&error.code==='invalid_business_setting');
+  await assert.rejects(updateBusinessSetting('adminFeeRate','-1'),error=>error instanceof RoundError&&error.code==='invalid_business_setting');
+  await db.query("UPDATE rounds SET status='SETTLED',settled_at=clock_timestamp() WHERE id=$1",[second.id]);
+  assert.equal((await db.query('SELECT status FROM rounds WHERE id=$1',[second.id])).rows[0].status,'SETTLED');
+  assert.equal((await db.query('SELECT sum(demo_points)::int AS total FROM members WHERE id=ANY($1::uuid[])',[members])).rows[0].total,after);
+  await updateRoundSettings(5,'manual');
+  assert.equal((await tickRoundEngine()).round,null);
+ }finally{await db.query('TRUNCATE round_audit_logs,rounds CASCADE');await db.end()}
+});

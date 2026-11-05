@@ -5,6 +5,7 @@ import type {EntryInput,Round} from './core';
 import {applyWalletMutationWithClient} from '../../modules/member-wallet/server/postgres';
 import {walletPathFromDatabase} from '../server/wallet-cutover';
 import {enforceStreamRoomPolicy} from '../stream/round-policy';
+import {appliedBusinessSettings,readBusinessSettings,shopStatusAt} from './business-settings';
 function asIso(value:unknown){return value instanceof Date?value.toISOString():new Date(String(value)).toISOString()}
 function mapRound(row:Record<string,unknown>):Round{return {id:String(row.id),opensAt:asIso(row.opens_at),closesAt:asIso(row.closes_at),durationMinutes:Number(row.duration_minutes),status:row.status as Round['status'],closedAt:row.closed_at?asIso(row.closed_at):null,settledAt:row.settled_at?asIso(row.settled_at):null,resultNumber:row.result_number?String(row.result_number):null}}
 export type RoundRuleKey='minEntryPoints'|'maxEntryPoints'|'alertBeforeClose';
@@ -61,6 +62,8 @@ export async function tickRoundEngine(){await enforceStreamRoomPolicy();return i
   const current=await transition(client);
   if(current.round)return current;
   if(await readRoundMode(client)==='manual')return current;
+  const business=await readBusinessSettings(client);
+  if(shopStatusAt(business.shopHours,current.serverTime)==='CLOSED')return current;
   const rules=await readRules(client);
   const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1');
   const duration=validateDuration(Number(setting.rows[0]?.duration_minutes??5));
@@ -69,6 +72,7 @@ export async function tickRoundEngine(){await enforceStreamRoomPolicy();return i
   const round=mapRound(inserted.rows[0]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_OPENED',jsonb_build_object('duration_minutes',$2::int))",[round.id,duration]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_BUSINESS_SETTINGS_APPLIED',$2::jsonb)",[round.id,JSON.stringify(business)]);
   return {round:{...round,alertBeforeClose:rules.alertBeforeClose},serverTime:await dbNow(client)};
  })}
 export async function updateRoundSettings(duration:number,mode?:RoundMode){validateDuration(duration);if(mode!==undefined&&mode!=='manual'&&mode!=='auto')throw new RoundError('invalid_round_mode');return inTransaction(async client=>{
@@ -95,6 +99,8 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  if(round.status!=='OPEN'||new Date(now)>=new Date(round.closes_at))throw new RoundError('round_closed',409);
  const rules=await appliedRules(client,roundId);
  if(input.demoPoints<rules.minEntryPoints||input.demoPoints>rules.maxEntryPoints)throw new RoundError('entry_points_out_of_range');
+ const business=await appliedBusinessSettings(client,roundId);
+ if(business.maxRoundPoints!==null&&BigInt(round.even_points)+BigInt(round.odd_points)+BigInt(input.demoPoints)>BigInt(business.maxRoundPoints))throw new RoundError('round_points_limit_exceeded',409);
  const walletEnabled=(await walletPathFromDatabase(client))==='wallet';
  let walletBalance:number|undefined;
  if(walletEnabled){const member=await client.query("SELECT id FROM members WHERE id=$1 AND status='active'",[memberId]);if(!member.rows[0])throw new RoundError('member_unavailable',403);
