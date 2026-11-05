@@ -24,10 +24,17 @@ async function transition(client:PoolClient){
  return {round:mapRound(row),serverTime:now};
 }
 export async function currentRound(){return inTransaction(async client=>transition(client))}
+export type RoundMode='manual'|'auto';
+async function readRoundMode(client:PoolClient):Promise<RoundMode>{
+ const result=await client.query("SELECT details->>'to' AS mode FROM round_audit_logs WHERE action='ROUND_MODE_CHANGED' ORDER BY id DESC LIMIT 1");
+ return result.rows[0]?.mode==='manual'?'manual':'auto';
+}
+export async function roundSettings(){const result=await database().query("SELECT duration_minutes,updated_at,(SELECT details->>'to' FROM round_audit_logs WHERE action='ROUND_MODE_CHANGED' ORDER BY id DESC LIMIT 1) AS mode FROM round_settings WHERE id=1");const row=result.rows[0];return {durationMinutes:Number(row?.duration_minutes??5),mode:row?.mode==='manual'?'manual' as const:'auto' as const,updatedAt:row?.updated_at}}
 export async function tickRoundEngine(){await enforceStreamRoomPolicy();return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=await transition(client);
   if(current.round)return current;
+  if(await readRoundMode(client)==='manual')return current;
   const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1');
   const duration=validateDuration(Number(setting.rows[0]?.duration_minutes??5));
   const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status)
@@ -36,13 +43,18 @@ export async function tickRoundEngine(){await enforceStreamRoomPolicy();return i
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_OPENED',jsonb_build_object('duration_minutes',$2::int))",[round.id,duration]);
   return {round,serverTime:await dbNow(client)};
  })}
-export async function updateDurationForNextRound(duration:number){validateDuration(duration);return inTransaction(async client=>{
+export async function updateRoundSettings(duration:number,mode?:RoundMode){validateDuration(duration);if(mode!==undefined&&mode!=='manual'&&mode!=='auto')throw new RoundError('invalid_round_mode');return inTransaction(async client=>{
+ await client.query('SELECT pg_advisory_xact_lock(74021601)');
  const previous=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
  const old=Number(previous.rows[0].duration_minutes);
+ const oldMode=await readRoundMode(client);
+ const nextMode=mode??oldMode;
  await client.query('UPDATE round_settings SET duration_minutes=$1,updated_at=clock_timestamp() WHERE id=1',[duration]);
- await client.query("INSERT INTO round_audit_logs(actor,action,details) VALUES('internal','DURATION_CHANGED',jsonb_build_object('from',$1::int,'to',$2::int))",[old,duration]);
- return {previous:old,next:duration};
+ if(old!==duration)await client.query("INSERT INTO round_audit_logs(actor,action,details) VALUES('internal','DURATION_CHANGED',jsonb_build_object('from',$1::int,'to',$2::int))",[old,duration]);
+ if(oldMode!==nextMode)await client.query("INSERT INTO round_audit_logs(actor,action,details) VALUES('internal','ROUND_MODE_CHANGED',jsonb_build_object('from',$1::text,'to',$2::text))",[oldMode,nextMode]);
+ return {previous:old,next:duration,previousMode:oldMode,mode:nextMode};
  })}
+export async function updateDurationForNextRound(duration:number){return updateRoundSettings(duration)}
 export async function submitDemoEntry(memberId:string,roundId:string,input:EntryInput){validateEntry(input);if(!/^\d+$/.test(roundId))throw new RoundError('invalid_round_id');return inTransaction(async client=>{
  await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);
  // Lock the round before checking database time; the worker takes the same lock when closing it.
