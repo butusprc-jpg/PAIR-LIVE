@@ -4,7 +4,6 @@ import {RoundError,validateDuration,validateEntry} from './core';
 import type {EntryInput,Round} from './core';
 import {applyWalletMutationWithClient} from '../../modules/member-wallet/server/postgres';
 import {walletPathFromDatabase} from '../server/wallet-cutover';
-import {enforceStreamRoomPolicy} from '../stream/round-policy';
 import {appliedBusinessSettings,readBusinessSettings,shopStatusAt} from './business-settings';
 function asIso(value:unknown){return value instanceof Date?value.toISOString():new Date(String(value)).toISOString()}
 function mapRound(row:Record<string,unknown>):Round{return {id:String(row.id),opensAt:asIso(row.opens_at),closesAt:asIso(row.closes_at),durationMinutes:Number(row.duration_minutes),status:row.status as Round['status'],closedAt:row.closed_at?asIso(row.closed_at):null,settledAt:row.settled_at?asIso(row.settled_at):null,resultNumber:row.result_number?String(row.result_number):null}}
@@ -57,7 +56,7 @@ export async function updateRoundRule(key:RoundRuleKey,value:number|boolean){
   return next;
  });
 }
-export async function tickRoundEngine(){await enforceStreamRoomPolicy();return inTransaction(async client=>{
+export async function tickRoundEngine(){return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=await transition(client);
   if(current.round)return current;
@@ -75,6 +74,25 @@ export async function tickRoundEngine(){await enforceStreamRoomPolicy();return i
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_BUSINESS_SETTINGS_APPLIED',$2::jsonb)",[round.id,JSON.stringify(business)]);
   return {round:{...round,alertBeforeClose:rules.alertBeforeClose},serverTime:await dbNow(client)};
  })}
+export async function startManualRound(adminId:string){
+ if(!/^[0-9a-f-]{36}$/i.test(adminId))throw new RoundError('invalid_admin_id',403);
+ return inTransaction(async client=>{
+  await client.query('SELECT pg_advisory_xact_lock(74021601)');
+  if(await readRoundMode(client)!=='manual')throw new RoundError('manual_mode_required',409);
+  const current=await transition(client);
+  if(current.round)throw new RoundError('round_already_active',409);
+  const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
+  const duration=validateDuration(Number(setting.rows[0]?.duration_minutes??5));
+  const rules=await readRules(client),business=await readBusinessSettings(client);
+  const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status)
+   SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN' FROM t RETURNING *`,[duration]);
+  const round=mapRound(inserted.rows[0]);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_OPENED',jsonb_build_object('duration_minutes',$3::int,'mode','manual'))",[round.id,adminId,duration]);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_BUSINESS_SETTINGS_APPLIED',$2::jsonb)",[round.id,JSON.stringify(business)]);
+  return {round:{...round,alertBeforeClose:rules.alertBeforeClose},serverTime:await dbNow(client)};
+ });
+}
 export async function updateRoundSettings(duration:number,mode?:RoundMode){validateDuration(duration);if(mode!==undefined&&mode!=='manual'&&mode!=='auto')throw new RoundError('invalid_round_mode');return inTransaction(async client=>{
  await client.query('SELECT pg_advisory_xact_lock(74021601)');
  const previous=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
