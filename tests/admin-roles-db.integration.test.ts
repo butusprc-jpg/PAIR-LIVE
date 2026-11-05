@@ -1,0 +1,67 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {Pool} from 'pg';
+import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
+import {addAdminRole,eligibleLineMembers,listAdminRoles,updateAdminRole} from '../lib/admin-roles/store';
+import {verifiedLineAdmin} from '../lib/topup/line-provider';
+import {activeLineAdminRecipients} from '../lib/topup/line-notify';
+import {createAdminAuth} from '../modules/admin-auth/server/auth';
+import {createPostgresAdminAdapters} from '../modules/admin-auth/server/postgres';
+const raw=process.env.TOPUP_TEST_DATABASE_URL;
+test('PostgreSQL admin roles, verified LINE binding, audit, session revocation and concurrent last admin',{skip:!raw},async()=>{
+ const root=new Pool({connectionString:assertTestTarget(raw),max:12});const schema='admin_roles_'+randomUUID().replaceAll('-','');let db:Pool|undefined;
+ const oldChannel=process.env.LINE_LOGIN_CHANNEL_ID;
+ try{
+  await root.query(`CREATE SCHEMA ${schema}`);
+  const url=new URL(raw!);url.searchParams.set('options',`-csearch_path=${schema}`);db=new Pool({connectionString:url.toString(),max:10});
+  for(const migration of await migrationManifest())await db.query(migration.sql);
+  process.env.LINE_LOGIN_CHANNEL_ID='test-channel';
+  const adminAId='U'+'a'.repeat(32),adminBId='U'+'b'.repeat(32),candidateId='U'+'c'.repeat(32);
+  const admins=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name,role) VALUES('line','test-channel',$1,'Admin A','admin'),('line','test-channel',$2,'Admin B','admin') RETURNING id",[adminAId,adminBId])).rows;
+  const [a,b]=admins.map(row=>row.id as string);
+  const member=(await db.query("INSERT INTO members(display_name) VALUES('Verified LINE Member') RETURNING id")).rows[0].id;
+  const candidate=(await db.query("INSERT INTO member_identities(member_id,provider,provider_user_id,provider_channel_id) VALUES($1,'line',$2,'test-channel') RETURNING id",[member,candidateId])).rows[0].id;
+  assert.equal((await eligibleLineMembers(db,'test-channel','Verified')).length,1);
+  const added=await addAdminRole(db,a,candidate,'viewer','test-channel');assert.equal(added.role,'viewer');
+  const auth=createAdminAuth({channelId:'test-channel',origin:'https://pair.example',environment:'production',allowlist:[],identityProvider:{async verify(){return {provider:'line',providerChannelId:'test-channel',providerUserId:candidateId,displayName:'Verified LINE Member',avatarUrl:null}}},...createPostgresAdminAdapters(db)});
+  const verified=await auth.verifyAdminIdentity('fake-test-token');assert.equal(verified.ok,true);
+  if(!verified.ok)throw Error('verification_failed');
+  const session=await auth.createAdminSession(verified.value);assert.equal(session.ok,true);
+  if(!session.ok)throw Error('session_failed');
+  const request=new Request('https://pair.example/admin',{headers:{cookie:`pair_admin_session=${session.value.token}`}});
+  assert.equal((await auth.requireAdmin(request,['viewer'])).ok,true);
+  assert.equal((await auth.requireAdmin(request,['admin'])).ok,false);
+  assert.equal(await verifiedLineAdmin(db,candidateId,'[]'),null);
+  await assert.rejects(addAdminRole(db,a,candidate,'admin','test-channel'),/admin_already_exists/);
+  await updateAdminRole(db,a,added.id,{role:'operator'});
+  assert.equal((await auth.requireAdmin(request,['operator'])).ok,true);
+  assert.equal((await auth.requireAdmin(request,['admin'])).ok,false);
+  await updateAdminRole(db,a,added.id,{role:'admin'});
+  assert.equal((await auth.requireAdmin(request,['admin'])).ok,true);
+  assert.equal((await verifiedLineAdmin(db,candidateId,'[]'))?.id,added.id);
+  assert.ok((await activeLineAdminRecipients(db,'[]')).includes(candidateId));
+  await db.query("INSERT INTO admin_sessions(token_hash,admin_id,expires_at) VALUES($1,$2,now()+interval '1 hour')",['f'.repeat(64),added.id]);
+  await updateAdminRole(db,a,added.id,{status:'disabled'});
+  assert.equal(await verifiedLineAdmin(db,candidateId,'[]'),null);
+  assert.ok(!(await activeLineAdminRecipients(db,'[]')).includes(candidateId));
+  assert.equal((await auth.requireAdmin(request,['admin'])).ok,false);
+  assert.ok((await db.query('SELECT revoked_at FROM admin_sessions WHERE admin_id=$1',[added.id])).rows[0].revoked_at);
+  await updateAdminRole(db,a,added.id,{status:'active'});
+  assert.equal((await verifiedLineAdmin(db,candidateId,'[]'))?.id,added.id);
+  // Serialize two opposing requests: one succeeds and the other loses admin authorization.
+  const outcomes=await Promise.allSettled([updateAdminRole(db,a,b,{status:'disabled'}),updateAdminRole(db,b,a,{status:'disabled'})]);
+  assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM admin_identities WHERE role='admin' AND status='active'")).rows[0].n,2);
+  const survivor=(await db.query("SELECT id FROM admin_identities WHERE id IN ($1,$2) AND role='admin' AND status='active'",[a,b])).rows[0].id;
+  await updateAdminRole(db,survivor,added.id,{status:'disabled'});
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM admin_identities WHERE role='admin' AND status='active'")).rows[0].n,1);
+  await assert.rejects(updateAdminRole(db,survivor,survivor,{status:'disabled'}),/self_role_change_forbidden/);
+  const state=await listAdminRoles(db);assert.ok(state.audit.length>=4);
+  assert.equal(state.audit[0].actor_id===a||state.audit[0].actor_id===b,true);
+  assert.equal(state.audit.some(row=>row.target_id===added.id&&row.previous_role==='viewer'&&row.next_role==='operator'),true);
+ }finally{
+  if(oldChannel===undefined)delete process.env.LINE_LOGIN_CHANNEL_ID;else process.env.LINE_LOGIN_CHANNEL_ID=oldChannel;
+  await db?.end();await root.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});await root.end();
+ }
+});
