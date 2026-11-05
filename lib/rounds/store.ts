@@ -7,6 +7,20 @@ import {walletPathFromDatabase} from '../server/wallet-cutover';
 import {enforceStreamRoomPolicy} from '../stream/round-policy';
 function asIso(value:unknown){return value instanceof Date?value.toISOString():new Date(String(value)).toISOString()}
 function mapRound(row:Record<string,unknown>):Round{return {id:String(row.id),opensAt:asIso(row.opens_at),closesAt:asIso(row.closes_at),durationMinutes:Number(row.duration_minutes),status:row.status as Round['status'],closedAt:row.closed_at?asIso(row.closed_at):null,settledAt:row.settled_at?asIso(row.settled_at):null,resultNumber:row.result_number?String(row.result_number):null}}
+export type RoundRuleKey='minEntryPoints'|'maxEntryPoints'|'alertBeforeClose';
+export type RoundRules={minEntryPoints:number;maxEntryPoints:number;alertBeforeClose:boolean};
+const defaultRules:RoundRules={minEntryPoints:1,maxEntryPoints:1000000,alertBeforeClose:true};
+async function readRules(client:PoolClient):Promise<RoundRules>{
+ const rows=await client.query("SELECT DISTINCT ON (details->>'key') details->>'key' AS key,details->'to' AS value FROM round_audit_logs WHERE action='ROUND_RULE_CHANGED' ORDER BY details->>'key',id DESC");
+ const rules={...defaultRules};
+ for(const row of rows.rows){if(row.key==='minEntryPoints')rules.minEntryPoints=Number(row.value);else if(row.key==='maxEntryPoints')rules.maxEntryPoints=Number(row.value);else if(row.key==='alertBeforeClose')rules.alertBeforeClose=row.value===true;}
+ return rules;
+}
+async function appliedRules(client:PoolClient,roundId:string):Promise<RoundRules>{
+ const result=await client.query("SELECT details FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_RULES_APPLIED' ORDER BY id DESC LIMIT 1",[roundId]);
+ return result.rows[0]?.details??defaultRules;
+}
+async function mapRoundWithRules(client:PoolClient,row:Record<string,unknown>){const round=mapRound(row);return {...round,alertBeforeClose:(await appliedRules(client,round.id)).alertBeforeClose}}
 async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
 async function dbNow(client:PoolClient){const result=await client.query('SELECT clock_timestamp() AS now');return new Date(result.rows[0].now).toISOString()}
 async function transition(client:PoolClient){
@@ -21,7 +35,7 @@ async function transition(client:PoolClient){
   const changed=await client.query("UPDATE rounds SET status='SCANNING' WHERE id=$1 AND status='CLOSED' RETURNING *",[row.id]);row=changed.rows[0];
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action) VALUES($1,'engine','AWAITING_SCAN')",[row.id]);
  }
- return {round:mapRound(row),serverTime:now};
+ return {round:await mapRoundWithRules(client,row),serverTime:now};
 }
 export async function currentRound(){return inTransaction(async client=>transition(client))}
 export type RoundMode='manual'|'auto';
@@ -30,18 +44,32 @@ async function readRoundMode(client:PoolClient):Promise<RoundMode>{
  return result.rows[0]?.mode==='manual'?'manual':'auto';
 }
 export async function roundSettings(){const result=await database().query("SELECT duration_minutes,updated_at,(SELECT details->>'to' FROM round_audit_logs WHERE action='ROUND_MODE_CHANGED' ORDER BY id DESC LIMIT 1) AS mode FROM round_settings WHERE id=1");const row=result.rows[0];return {durationMinutes:Number(row?.duration_minutes??5),mode:row?.mode==='manual'?'manual' as const:'auto' as const,updatedAt:row?.updated_at}}
+export async function roundRuleSettings(){return inTransaction(readRules)}
+export async function updateRoundRule(key:RoundRuleKey,value:number|boolean){
+ if(key==='alertBeforeClose'?typeof value!=='boolean':!Number.isInteger(value)||Number(value)<1||Number(value)>1000000)throw new RoundError('invalid_round_rule');
+ if(!['minEntryPoints','maxEntryPoints','alertBeforeClose'].includes(key))throw new RoundError('invalid_round_rule');
+ return inTransaction(async client=>{
+  await client.query('SELECT pg_advisory_xact_lock(74021601)');
+  const old=await readRules(client),next={...old,[key]:value};
+  if(next.minEntryPoints>next.maxEntryPoints)throw new RoundError('invalid_entry_range');
+  if(old[key]!==value)await client.query("INSERT INTO round_audit_logs(actor,action,details) VALUES('internal','ROUND_RULE_CHANGED',jsonb_build_object('key',$1::text,'from',$2::jsonb,'to',$3::jsonb))",[key,JSON.stringify(old[key]),JSON.stringify(value)]);
+  return next;
+ });
+}
 export async function tickRoundEngine(){await enforceStreamRoomPolicy();return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=await transition(client);
   if(current.round)return current;
   if(await readRoundMode(client)==='manual')return current;
+  const rules=await readRules(client);
   const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1');
   const duration=validateDuration(Number(setting.rows[0]?.duration_minutes??5));
   const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status)
   SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN' FROM t RETURNING *`,[duration]);
   const round=mapRound(inserted.rows[0]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_OPENED',jsonb_build_object('duration_minutes',$2::int))",[round.id,duration]);
-  return {round,serverTime:await dbNow(client)};
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
+  return {round:{...round,alertBeforeClose:rules.alertBeforeClose},serverTime:await dbNow(client)};
  })}
 export async function updateRoundSettings(duration:number,mode?:RoundMode){validateDuration(duration);if(mode!==undefined&&mode!=='manual'&&mode!=='auto')throw new RoundError('invalid_round_mode');return inTransaction(async client=>{
  await client.query('SELECT pg_advisory_xact_lock(74021601)');
@@ -65,6 +93,8 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  if(prior.rows[0]){const row=prior.rows[0];if(String(row.round_id)!==roundId||row.side!==input.side||Number(row.demo_points)!==input.demoPoints)throw new RoundError('idempotency_conflict',409);return {id:row.id,roundId:String(row.round_id),status:row.status,replayed:true}}
  const now=await dbNow(client);
  if(round.status!=='OPEN'||new Date(now)>=new Date(round.closes_at))throw new RoundError('round_closed',409);
+ const rules=await appliedRules(client,roundId);
+ if(input.demoPoints<rules.minEntryPoints||input.demoPoints>rules.maxEntryPoints)throw new RoundError('entry_points_out_of_range');
  const walletEnabled=(await walletPathFromDatabase(client))==='wallet';
  let walletBalance:number|undefined;
  if(walletEnabled){const member=await client.query("SELECT id FROM members WHERE id=$1 AND status='active'",[memberId]);if(!member.rows[0])throw new RoundError('member_unavailable',403);

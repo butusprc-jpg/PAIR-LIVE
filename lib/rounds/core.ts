@@ -1,5 +1,5 @@
 export type RoundStatus='OPEN'|'CLOSED'|'SCANNING'|'REVIEW_REQUIRED'|'SETTLED'|'CANCELLED';
-export type Round={id:string;opensAt:string;closesAt:string;durationMinutes:number;status:RoundStatus;closedAt:string|null;settledAt:string|null;resultNumber:string|null};
+export type Round={id:string;opensAt:string;closesAt:string;durationMinutes:number;status:RoundStatus;closedAt:string|null;settledAt:string|null;resultNumber:string|null;alertBeforeClose?:boolean};
 export type EntryInput={side:'even'|'odd';demoPoints:number;idempotencyKey:string};
 export class RoundError extends Error{constructor(public code:string,public status=400){super(code)}}
 export function validateDuration(value:number){if(!Number.isInteger(value)||value<1||value>60)throw new RoundError('invalid_duration');return value}
