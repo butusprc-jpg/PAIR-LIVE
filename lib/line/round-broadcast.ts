@@ -4,6 +4,7 @@ import {database} from '../server/db';
 export const closingBroadcastText='🔴 PAIR LIVE เหลือเวลาอีก 1 นาที! ระบบกำลังจะปิดรับการทายผล รีบเข้ามาทายผลก่อนหมดเวลา';
 export type BroadcastOutcome={status:'SENT'|'FAILED'|'UNKNOWN';httpStatus?:number;acceptedRequestId?:string;errorCode?:string;retryAfterMs?:number};
 export type BroadcastJob={roundId:string;retryKey:string;attempts:number;closesAt:string};
+type ClaimedJob=BroadcastJob&{roundStatus:string};
 
 /** The worker queues this on server time; a one-minute round queues immediately after opening. */
 export async function enqueueClosingBroadcast(client:PoolClient,round:{id:string;status:string;closesAt:string},serverTime:string){
@@ -41,21 +42,23 @@ export async function sendClosingBroadcast(job:BroadcastJob,token:string|undefin
  }catch(error){if(error instanceof Error&&error.message==='quota_rate_limited')return {status:'FAILED',httpStatus:429,errorCode:'quota_rate_limited',retryAfterMs:5000};return {status:'UNKNOWN',errorCode:error instanceof Error&&error.message==='quota_check_failed'?'quota_check_failed':'network_unknown',retryAfterMs:5000}}
 }
 
-async function claim(pool:Pool):Promise<BroadcastJob|null>{
+async function claim(pool:Pool):Promise<ClaimedJob|null>{
  const client=await pool.connect();try{await client.query('BEGIN');
-  const selected=await client.query(`SELECT o.round_id,o.retry_key,o.attempts,r.closes_at FROM round_line_broadcast_outbox o JOIN rounds r ON r.id=o.round_id
-   WHERE o.status IN ('PENDING','FAILED','UNKNOWN','SENDING') AND o.attempts<5 AND o.error_code IS DISTINCT FROM 'window_elapsed' AND o.next_attempt_at<=clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until<clock_timestamp())
+  const selected=await client.query(`SELECT o.round_id,o.retry_key,o.attempts,r.closes_at,r.status AS round_status FROM round_line_broadcast_outbox o JOIN rounds r ON r.id=o.round_id
+   WHERE o.status IN ('PENDING','FAILED','UNKNOWN','SENDING') AND o.attempts<5 AND o.error_code IS DISTINCT FROM 'window_elapsed' AND o.error_code IS DISTINCT FROM 'round_not_open' AND o.next_attempt_at<=clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until<clock_timestamp())
    ORDER BY o.next_attempt_at,o.round_id LIMIT 1 FOR UPDATE OF o SKIP LOCKED`);
   const row=selected.rows[0];if(!row){await client.query('COMMIT');return null}
   await client.query("UPDATE round_line_broadcast_outbox SET status='SENDING',attempts=attempts+1,lease_until=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp() WHERE round_id=$1",[row.round_id]);
-  await client.query('COMMIT');return {roundId:String(row.round_id),retryKey:String(row.retry_key),attempts:Number(row.attempts)+1,closesAt:new Date(row.closes_at).toISOString()};
+  await client.query('COMMIT');return {roundId:String(row.round_id),retryKey:String(row.retry_key),attempts:Number(row.attempts)+1,closesAt:new Date(row.closes_at).toISOString(),roundStatus:String(row.round_status)};
  }catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}
 }
 
 export async function dispatchClosingBroadcast(pool:Pool=database(),token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN,fetcher:typeof fetch=fetch){
  const job=await claim(pool);if(!job)return null;
- const time=await pool.query('SELECT clock_timestamp() AS now');
- const outcome:BroadcastOutcome=Date.parse(time.rows[0].now)>=Date.parse(job.closesAt)
+ const state=await pool.query('SELECT status,clock_timestamp() AS now FROM rounds WHERE id=$1',[job.roundId]);
+ const outcome:BroadcastOutcome=job.roundStatus!=='OPEN'||state.rows[0]?.status!=='OPEN'
+  ?{status:'FAILED',errorCode:'round_not_open',retryAfterMs:86_400_000}
+  :Date.parse(state.rows[0].now)>=Date.parse(job.closesAt)
   ?{status:'FAILED',errorCode:'window_elapsed',retryAfterMs:86_400_000}
   :await sendClosingBroadcast(job,token,fetcher);
  await pool.query(`UPDATE round_line_broadcast_outbox SET status=$2,last_http_status=$3,accepted_request_id=$4,error_code=$5,

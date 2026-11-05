@@ -58,11 +58,11 @@ export async function updateRoundRule(key:RoundRuleKey,value:number|boolean){
   return next;
  });
 }
-export async function tickRoundEngine(options:{requireLiveForAuto?:boolean}={}){let live=true;if(options.requireLiveForAuto){const adapter=configuredAdapter();try{live=!!adapter&&await adapter.status()==='LIVE'}catch{live=false}}return inTransaction(async client=>{
+export async function tickRoundEngine(options:{requireLiveForAuto?:boolean;allowAutoStart?:boolean}={}){let live=true;if(options.requireLiveForAuto){const adapter=configuredAdapter();try{live=!!adapter&&await adapter.status()==='LIVE'}catch{live=false}}return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=await transition(client);
   if(current.round){await enqueueClosingBroadcast(client,current.round,current.serverTime);return current}
-  if(!live)return current;
+  if(options.allowAutoStart===false||!live)return current;
   if(await readRoundMode(client)==='manual')return current;
   if(options.requireLiveForAuto){const prior=await client.query("SELECT a.details->>'source' AS source FROM rounds r JOIN round_audit_logs a ON a.round_id=r.id AND a.action='ROUND_OPENED' ORDER BY r.id DESC,a.id DESC LIMIT 1");if(!['livekit','livekit_auto'].includes(prior.rows[0]?.source))return current}
   const business=await readBusinessSettings(client);
