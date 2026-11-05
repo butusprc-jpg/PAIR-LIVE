@@ -28,7 +28,7 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
   }catch(e){try{await load()}catch{}setMessage((e as Error).message+' · ตรวจสถานะก่อนกดส่งซ้ำ')}
   finally{lock.current=false;setBusy(false)}
  }
- return <section className="card" aria-label="ถอนแต้ม"><h2 id="wallet-dialog-title">ถอนแต้ม</h2>
+ return <section className="card member-transfer" aria-label="ถอนแต้ม"><h2 id="wallet-dialog-title">ถอนแต้ม</h2>
   <p className="muted">ส่งคำขอแล้วแต้มยังไม่ถูกหัก แอดมินตรวจสอบและยืนยันจ่ายแต้มก่อนระบบจึงหักแต้ม</p><p>แต้มพร้อมถอน: <b>{balance===null?'กำลังตรวจสอบ':balance.toLocaleString('th-TH')} แต้ม</b></p>
   <label>ข้อมูลรับแต้ม (ไม่เกิน 50 ตัวอักษร)
    <input className="field" type="text" maxLength={50} value={details} disabled={busy} onChange={e=>setDetails(e.target.value)}/>
