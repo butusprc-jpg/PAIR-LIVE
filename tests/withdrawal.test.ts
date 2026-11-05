@@ -10,13 +10,13 @@ import {handleLineWebhook} from '../lib/line-webhook-core';
 test('withdrawal details and one-action LINE card',()=>{
  assert.equal(validateDetails(' 123-456 '),'123-456');
  for(const s of ['', ' ', 'x'.repeat(51), 'a\nb'])assert.throws(()=>validateDetails(s));
- const card=JSON.stringify(withdrawalCard({id:randomUUID(),display_name:'Member',requested_points:50,payout_details:'123456'}));
+ const card=JSON.stringify(withdrawalCard({request_id:randomUUID(),display_name:'Member',requested_points:50,payout_details:'123456'}));
  assert.match(card,/withdraw:v1:transfer:/);assert.doesNotMatch(card,/withdraw:v1:confirm:/);
 });
 const raw=process.env.TOPUP_TEST_DATABASE_URL;
 test('PostgreSQL approval debit, old predebit, webhook replay, and notifications',{skip:!raw},async()=>{
  const pool=new Pool({connectionString:assertTestTarget(raw),max:12});
- const schema='withdraw_test_'+randomUUID().replaceAll('-','');let db:Pool|undefined;
+ const schema='withdraw_test_'+randomUUID().replaceAll('-',''),rlsRole='withdraw_reader_'+randomUUID().replaceAll('-','');let db:Pool|undefined;
  try{
   await pool.query(`CREATE SCHEMA ${schema}`);
   const url=new URL(raw!);url.searchParams.set('options',`-csearch_path=${schema}`);
@@ -38,6 +38,16 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    const recipients=[adminLine],allowlist=JSON.stringify([{userId:adminLine,role:'admin'}]);
    const key=randomUUID(),row=await createWithdrawal(db,member,100,'account 123',key,recipients);
    assert.equal(row.status,'PENDING');assert.equal(row.debit_timing,'ON_APPROVAL');assert.equal(await balance(),600);
+   await db.query(`CREATE ROLE ${rlsRole}`);
+   await db.query(`GRANT USAGE ON SCHEMA ${schema} TO ${rlsRole}`);
+   await db.query(`GRANT SELECT ON member_withdrawal_requests TO ${rlsRole}`);
+   const rlsClient=await db.connect();try{
+    await rlsClient.query('BEGIN');await rlsClient.query(`SET LOCAL ROLE ${rlsRole}`);
+    assert.equal((await rlsClient.query('SELECT id FROM member_withdrawal_requests WHERE id=$1',[row.id])).rowCount,0);
+    await rlsClient.query("SELECT set_config('pair_live.topup_admin','true',true)");
+    assert.equal((await rlsClient.query('SELECT id FROM member_withdrawal_requests WHERE id=$1',[row.id])).rowCount,1);
+    await rlsClient.query('ROLLBACK');
+   }finally{rlsClient.release()}
    assert.equal((await createWithdrawal(db,member,100,'account 123',key,recipients)).replayed,true);assert.equal(await balance(),600);
    await assert.rejects(createWithdrawal(db,member,101,'different',key,recipients),/idempotency_conflict/);
    const delivery:{to:string;message:unknown}[]=[];
@@ -48,15 +58,27 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    await db.query("UPDATE member_withdrawal_line_outbox SET next_attempt_at=now()-interval '1 second' WHERE request_id=$1",[row.id]);
    assert.equal((await dispatchWithdrawalLine(db,{fetch:fakeFetch})).sent,1);
    assert.equal((await dispatchWithdrawalLine(db,{fetch:fakeFetch})).sent,0);
+   const outboxId=(await db.query("SELECT id FROM member_withdrawal_line_outbox WHERE request_id=$1 AND purpose='ADMIN_REQUEST'",[row.id])).rows[0].id;
+   const card=delivery[0].message as {contents:{footer:{contents:{action:{data:string}}[]}}};
+   const cardData=card.contents.footer.contents[0].action.data;
+   assert.notEqual(outboxId,row.id);
+   assert.equal(cardData,`withdraw:v1:transfer:${row.id}`);
+   assert.equal(card.contents.footer.contents[1].action.data,`withdraw:v1:reject:${row.id}`);
+   const errors:{label:unknown;details:unknown}[]=[],originalError=console.error;
+   console.error=(label:unknown,details:unknown)=>{errors.push({label,details})};
+   try{await assert.rejects(processWithdrawalPostback(db,{webhookEventId:'wrong-outbox-id',userId:adminLine,data:`withdraw:v1:transfer:${outboxId}`},{allowlist,fetch:fakeFetch}),/withdrawal_not_found/)}finally{console.error=originalError}
+   assert.deepEqual(errors[0],{label:'withdrawal_postback_failed',details:{step:'request_lookup',code:'withdrawal_not_found',requestId:outboxId,adminAuthorized:true,rlsAdminContext:true}});
+   assert.equal(await balance(),600);
+   assert.equal((await db.query('SELECT status FROM member_withdrawal_requests WHERE id=$1',[row.id])).rows[0].status,'PENDING');
    const secret='synthetic-webhook-secret';
-   async function webhook(eventId:string,id:string,action='transfer'){
-    const body=JSON.stringify({events:[{type:'postback',webhookEventId:eventId,source:{type:'user',userId:adminLine},postback:{data:`withdraw:v1:${action}:${id}`}}]});
+   async function webhook(eventId:string,id:string,action='transfer',data=`withdraw:v1:${action}:${id}`){
+    const body=JSON.stringify({events:[{type:'postback',webhookEventId:eventId,source:{type:'user',userId:adminLine},postback:{data}}]});
     const signature=createHmac('sha256',secret).update(body).digest('base64');
     return handleLineWebhook(new Request('https://example.test/api/line/webhook',{method:'POST',headers:{'Content-Type':'application/json','X-Line-Signature':signature},body}),secret,async event=>{
      await processWithdrawalPostback(db!,{webhookEventId:event.webhookEventId,userId:event.userId,data:event.data!},{allowlist,fetch:fakeFetch});
     });
    }
-   assert.equal((await webhook('new-approved',row.id)).status,200);assert.equal(await balance(),500);
+   assert.equal((await webhook('new-approved',row.id,'transfer',cardData)).status,200);assert.equal(await balance(),500);
    assert.match(JSON.stringify(delivery.at(-1)?.message),/ยืนยันจ่ายแต้มแล้ว/);
    assert.equal((await webhook('new-approved',row.id)).status,200);
    assert.equal((await webhook('new-approved-other-event',row.id)).status,200);assert.equal(await balance(),500);
@@ -107,5 +129,5 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    if(oldLogin===undefined)delete process.env.LINE_LOGIN_CHANNEL_ID;else process.env.LINE_LOGIN_CHANNEL_ID=oldLogin;
    if(oldToken===undefined)delete process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;else process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=oldToken;
   }
- }finally{await db?.end();await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await pool.end()}
+ }finally{await db?.end();await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await pool.query(`DROP ROLE IF EXISTS ${rlsRole}`);await pool.end()}
 });
