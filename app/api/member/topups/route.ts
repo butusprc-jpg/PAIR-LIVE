@@ -1,7 +1,7 @@
 import {currentMember,sameOrigin} from '../../../../lib/server/auth-http';
 import {database} from '../../../../lib/server/db';
 import {createTopup,listTopups,maximumPoints,TopupError,validatePoints,uuid} from '../../../../lib/topup/store';
-import {dispatchTopupLine,lineAdminRecipients} from '../../../../lib/topup/line-notify';
+import {dispatchTopupLine,activeLineAdminRecipients} from '../../../../lib/topup/line-notify';
 import {noStore,topupFailure} from '../../../../lib/topup/http';
 export const runtime='nodejs';
 export async function GET(){
@@ -22,7 +22,7 @@ export async function POST(request:Request){
   validatePoints(points);
   const key=body.idempotencyKey;
   if(!uuid(key))throw new TopupError('invalid_idempotency_key');
-  const record=await createTopup(database(),m.id,points,key,lineAdminRecipients(process.env.ADMIN_AUTH_ALLOWLIST_JSON));
+  const record=await createTopup(database(),m.id,points,key,await activeLineAdminRecipients(database(),process.env.ADMIN_AUTH_ALLOWLIST_JSON));
   // The member's topup is committed independently of LINE availability.
   // Persisted outbox rows can be retried from the protected admin API.
   try{await dispatchTopupLine(database())}catch(error){console.error('topup_line_dispatch_failed',error instanceof Error?error.name:'unknown')}

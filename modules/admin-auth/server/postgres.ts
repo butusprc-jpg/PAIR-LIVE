@@ -1,17 +1,17 @@
 import type {Pool} from 'pg';
-import type {AdminDatabase, AdminIdentity, AdminSession, AdminSessionStore} from '../types';
+import type {AdminDatabase, AdminIdentity, AdminSession, AdminSessionStore, AdminRole} from '../types';
 import {assertServerRuntime} from './runtime';
 
 type IdentityRow = {
  id:string;provider:'line';provider_channel_id:string;provider_user_id:string;
- display_name:string;avatar_url:string|null;status:'active'|'disabled';
+ display_name:string;avatar_url:string|null;status:'active'|'disabled';role:AdminRole|null;
 };
 type SessionRow = {
  token_hash:string;admin_id:string;created_at:Date;expires_at:Date;revoked_at:Date|null;
 };
 function identity(row:IdentityRow):AdminIdentity {
  return {id:row.id,provider:row.provider,providerChannelId:row.provider_channel_id,
-  providerUserId:row.provider_user_id,displayName:row.display_name,avatarUrl:row.avatar_url,status:row.status};
+  providerUserId:row.provider_user_id,displayName:row.display_name,avatarUrl:row.avatar_url,status:row.status,role:row.role};
 }
 function session(row:SessionRow):AdminSession {
  return {tokenHash:row.token_hash,adminId:row.admin_id,createdAt:row.created_at.getTime(),
@@ -23,23 +23,28 @@ export function createPostgresAdminAdapters(pool:Pick<Pool,'query'>):{database:A
  assertServerRuntime();
  if(!pool||typeof pool.query!=='function')throw new Error('admin_database_not_configured');
  const database:AdminDatabase = {
-  async upsertAllowedIdentity(verified,now) {
+  async upsertAllowedIdentity(verified,now,bootstrapRole) {
    assertServerRuntime();
    // Authorization happens in createAdminAuth before this method. Conflict handling
    // deliberately preserves status so login cannot reactivate a disabled admin.
    const result=await pool.query<IdentityRow>(
-    `INSERT INTO admin_identities (provider,provider_channel_id,provider_user_id,display_name,avatar_url,created_at,updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$6)
+    `INSERT INTO admin_identities (provider,provider_channel_id,provider_user_id,display_name,avatar_url,created_at,updated_at,role)
+     VALUES ($1,$2,$3,$4,$5,$6,$6,$7)
      ON CONFLICT (provider,provider_channel_id,provider_user_id) DO UPDATE
-     SET display_name=EXCLUDED.display_name,avatar_url=EXCLUDED.avatar_url,updated_at=EXCLUDED.updated_at
-     RETURNING id,provider,provider_channel_id,provider_user_id,display_name,avatar_url,status`,
-    [verified.provider,verified.providerChannelId,verified.providerUserId,verified.displayName,verified.avatarUrl,new Date(now)]);
+     SET display_name=EXCLUDED.display_name,avatar_url=EXCLUDED.avatar_url,updated_at=EXCLUDED.updated_at,role=COALESCE(admin_identities.role,EXCLUDED.role)
+     RETURNING id,provider,provider_channel_id,provider_user_id,display_name,avatar_url,status,role`,
+    [verified.provider,verified.providerChannelId,verified.providerUserId,verified.displayName,verified.avatarUrl,new Date(now),bootstrapRole]);
    return identity(result.rows[0]);
+  },
+  async findVerifiedIdentity(verified) {
+   assertServerRuntime();
+   const result=await pool.query<IdentityRow>('SELECT id,provider,provider_channel_id,provider_user_id,display_name,avatar_url,status,role FROM admin_identities WHERE provider=$1 AND provider_channel_id=$2 AND provider_user_id=$3',[verified.provider,verified.providerChannelId,verified.providerUserId]);
+   return result.rows[0]?identity(result.rows[0]):null;
   },
   async findIdentity(id) {
    assertServerRuntime();
    const result=await pool.query<IdentityRow>(
-    'SELECT id,provider,provider_channel_id,provider_user_id,display_name,avatar_url,status FROM admin_identities WHERE id=$1',[id]);
+    'SELECT id,provider,provider_channel_id,provider_user_id,display_name,avatar_url,status,role FROM admin_identities WHERE id=$1',[id]);
    return result.rows[0]?identity(result.rows[0]):null;
   },
   async audit(event) {

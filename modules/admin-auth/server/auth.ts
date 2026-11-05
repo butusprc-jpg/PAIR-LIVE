@@ -27,7 +27,7 @@ async function body(request:Request):Promise<Record<string,unknown>|null> {
 export function createAdminAuth(config:AdminAuthConfig):AdminAuth {
  assertServerRuntime();let allowlist:ReadonlyMap<string,AdminRole>;
  try {
-  if(!config||!config.channelId?.trim()||config.channelId!==config.channelId.trim()||!Array.isArray(config.allowlist)||config.allowlist.length===0||!config.identityProvider?.verify||!config.database?.upsertAllowedIdentity||!config.database?.findIdentity||!config.database?.audit||!config.sessionStore?.insert||!config.sessionStore?.find||!config.sessionStore?.revoke||!config.sessionStore?.putChallenge||!config.sessionStore?.consumeChallenge)throw new Error();
+  if(!config||!config.channelId?.trim()||config.channelId!==config.channelId.trim()||!Array.isArray(config.allowlist)||(config.allowlist.length===0&&!config.database?.findVerifiedIdentity)||!config.identityProvider?.verify||!config.database?.upsertAllowedIdentity||!config.database?.findIdentity||!config.database?.audit||!config.sessionStore?.insert||!config.sessionStore?.find||!config.sessionStore?.revoke||!config.sessionStore?.putChallenge||!config.sessionStore?.consumeChallenge)throw new Error();
   const url=new URL(config.origin);
   if(url.origin!==config.origin||url.username||url.password||!['production','development'].includes(config.environment)||(config.environment==='production'&&url.protocol!=='https:')||(config.environment==='development'&&url.protocol!=='https:'&&!(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname))))throw new Error();
   allowlist=allowlistMap(config.allowlist);
@@ -40,9 +40,12 @@ export function createAdminAuth(config:AdminAuthConfig):AdminAuth {
   assertServerRuntime();if(typeof token!=='string'||!token||token.length>8192)return fail('identity_invalid');
   let identity;try{identity=await provider.verify(token,channelId)}catch{return fail('identity_invalid')}
   if(!validIdentity(identity,channelId))return fail('identity_invalid');
-  const role=roleFor(identity,channelId,allowlist);if(!role)return fail('admin_forbidden');
+  const bootstrapRole=roleFor(identity,channelId,allowlist);
   try {
-   const admin=await database.upsertAllowedIdentity(identity,now());
+   const existing=database.findVerifiedIdentity?await database.findVerifiedIdentity(identity):null;
+   const role=existing?.role??bootstrapRole;if(!role)return fail('admin_forbidden');
+   const admin=existing?.role||!bootstrapRole?existing:await database.upsertAllowedIdentity(identity,now(),bootstrapRole);
+   if(!admin)return fail('admin_forbidden');
    if(!validIdentity(admin,channelId)||admin.providerUserId!==identity.providerUserId||!admin.id||admin.status!=='active')return fail('admin_forbidden');
    const result=Object.freeze({identity:Object.freeze({...admin}),role});verified.add(result);return ok(result);
   }catch{return fail('service_unavailable')}
@@ -51,7 +54,7 @@ export function createAdminAuth(config:AdminAuthConfig):AdminAuth {
   assertServerRuntime();if(!identity||!verified.has(identity))return fail('identity_invalid');verified.delete(identity);
   let insertedHash:string|undefined;
   try {
-   const admin=await database.findIdentity(identity.identity.id);const role=admin?roleFor(admin,channelId,allowlist):null;
+   const admin=await database.findIdentity(identity.identity.id);const role=admin?(admin.role??roleFor(admin,channelId,allowlist)):null;
    if(!admin||!validIdentity(admin,channelId)||admin.status!=='active'||!role||admin.providerUserId!==identity.identity.providerUserId)return fail('admin_forbidden');
    const time=now();const token=randomToken();const session={tokenHash:hashToken(token),adminId:admin.id,createdAt:time,expiresAt:time+ttl*1000,revokedAt:null};
    if(previousToken&&validToken(previousToken))await store.revoke(hashToken(previousToken),time);
@@ -65,7 +68,7 @@ export function createAdminAuth(config:AdminAuthConfig):AdminAuth {
   try {
    const session=await store.find(hashToken(token));const time=now();
    if(!session||session.tokenHash!==hashToken(token)||session.revokedAt!==null||!Number.isFinite(session.expiresAt)||session.expiresAt<=time)return fail('session_invalid');
-   const admin=await database.findIdentity(session.adminId);const role=admin?roleFor(admin,channelId,allowlist):null;
+   const admin=await database.findIdentity(session.adminId);const role=admin?(admin.role??roleFor(admin,channelId,allowlist)):null;
    if(!admin||!validIdentity(admin,channelId)||admin.status!=='active'||!role)return fail('admin_forbidden');
    return ok({session,admin:profile(admin,role)});
   }catch{return fail('service_unavailable')}

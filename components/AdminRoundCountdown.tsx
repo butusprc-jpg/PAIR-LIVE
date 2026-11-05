@@ -1,0 +1,10 @@
+'use client';
+import {useEffect,useState} from 'react';
+import type {Round} from '../lib/rounds/core';
+import {remainingRoundSeconds,roundClock,serverClockOffset} from '../lib/rounds/countdown';
+export default function AdminRoundCountdown(){
+ const[round,setRound]=useState<(Round&{alertBeforeClose?:boolean})|null>(null),[offset,setOffset]=useState(0),[now,setNow]=useState(0),[error,setError]=useState(false);
+ useEffect(()=>{let active=true;async function refresh(){const sent=Date.now();try{const response=await fetch('/api/admin/round/current',{cache:'no-store'});if(!response.ok)throw new Error();const data=await response.json();if(!active)return;setOffset(serverClockOffset(data.serverTime,sent,Date.now()));setRound(data.round);setError(false)}catch{if(active)setError(true)}}void refresh();const poll=setInterval(refresh,3000),clock=setInterval(()=>setNow(Date.now()),250);const visible=()=>{if(document.visibilityState==='visible')void refresh()};window.addEventListener('online',visible);document.addEventListener('visibilitychange',visible);return()=>{active=false;clearInterval(poll);clearInterval(clock);window.removeEventListener('online',visible);document.removeEventListener('visibilitychange',visible)}},[]);
+ const remaining=round?remainingRoundSeconds(round.closesAt,now||Date.now(),offset):0;
+ return <section className="card admin-round-settings" aria-label="เวลารอบปัจจุบัน"><h2>เวลารอบปัจจุบัน</h2>{error&&<p role="alert" className="muted">ยังไม่สามารถโหลดเวลารอบได้</p>}{!round?<p className="muted">ยังไม่มีรอบที่กำลังทำงาน</p>:<><p>รอบ #{round.id} · {round.status}</p><p>เริ่ม {new Date(round.opensAt).toLocaleString('th-TH',{timeZone:'Asia/Bangkok'})} · ปิด {new Date(round.closesAt).toLocaleString('th-TH',{timeZone:'Asia/Bangkok'})} (เวลาไทย)</p><strong className={remaining<=60?'urgent':''}>{roundClock(remaining)}</strong>{round.status==='OPEN'&&remaining>0&&remaining<=60&&round.alertBeforeClose&&<p className="urgent-note">ใกล้ปิดรอบ</p>}{round.status==='OPEN'&&remaining===0&&<p className="urgent-note">ปิดรับแล้ว</p>}</>}</section>
+}
