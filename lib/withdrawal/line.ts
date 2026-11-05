@@ -1,6 +1,6 @@
 import type {Pool,PoolClient} from 'pg';
 import {pushLine,verifiedLineAdmin} from '../topup/line-provider';
-import {decideWithdrawal} from './store';
+import {decideWithdrawalWithClient} from './store';
 import {TopupError} from '../topup/store';
 
 type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:string;attempts:number;requested_points:number;payout_details:string;display_name:string;status:string;debit_timing:string};
@@ -77,9 +77,9 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
     if(!previous.rows[0])throw new TopupError('webhook_event_conflict',409);
     return {result:previous.rows[0].result,replayed:true,points:previous.rows[0].requested_points,debit_timing:previous.rows[0].debit_timing};
    }
-   let row:Awaited<ReturnType<typeof decideWithdrawal>>|null=null;
+   let row:Awaited<ReturnType<typeof decideWithdrawalWithClient>>|null=null;
    let result:string;
-   try{row=await decideWithdrawal(pool,admin.id,match[2],decision);result=row.status}
+   try{row=await decideWithdrawalWithClient(c,admin.id,match[2],decision);result=row.status}
    catch(error){
     if(!(error instanceof TopupError&&error.code==='withdrawal_insufficient_points'))throw error;
     result='BLOCKED_INSUFFICIENT';

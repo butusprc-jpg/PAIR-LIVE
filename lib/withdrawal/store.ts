@@ -44,7 +44,10 @@ export async function createWithdrawal(pool:Pool,memberId:string,points:unknown,
 }
 export async function decideWithdrawal(pool:Pool,adminId:string,requestId:unknown,action:unknown){
  if(!uuid(requestId)||!['TRANSFERRED','REJECTED'].includes(String(action)))throw new TopupError('invalid_withdrawal_decision');
- return scoped(pool,null,async c=>{
+ return scoped(pool,null,c=>decideWithdrawalWithClient(c,adminId,requestId,action));
+}
+export async function decideWithdrawalWithClient(c:PoolClient,adminId:string,requestId:unknown,action:unknown){
+ if(!uuid(requestId)||!['TRANSFERRED','REJECTED'].includes(String(action)))throw new TopupError('invalid_withdrawal_decision');
   const admin=await c.query("SELECT id FROM admin_identities WHERE id=$1 AND status='active' FOR SHARE",[adminId]);
   if(!admin.rowCount)throw new TopupError('admin_forbidden',403);
   const r=(await c.query('SELECT * FROM member_withdrawal_requests WHERE id=$1 FOR UPDATE',[requestId])).rows[0];
@@ -70,5 +73,4 @@ export async function decideWithdrawal(pool:Pool,adminId:string,requestId:unknow
   if(user&&/^U[0-9a-f]{32}$/i.test(user))
    await c.query("INSERT INTO member_withdrawal_line_outbox(request_id,recipient_user_id,purpose) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",[r.id,user,action==='TRANSFERRED'?'MEMBER_TRANSFERRED':'MEMBER_REJECTED']);
   return {...result,replayed:false};
- });
 }

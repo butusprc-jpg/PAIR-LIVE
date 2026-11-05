@@ -20,7 +20,7 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
  try{
   await pool.query(`CREATE SCHEMA ${schema}`);
   const url=new URL(raw!);url.searchParams.set('options',`-csearch_path=${schema}`);
-  db=new Pool({connectionString:url.toString(),max:12});
+  db=new Pool({connectionString:url.toString(),max:1,connectionTimeoutMillis:1000});
   const migrations=await migrationManifest();for(const m of migrations.slice(0,-1))await db.query(m.sql);
   const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Withdraw fixture',1000) RETURNING id")).rows[0].id;
   const adminLine='U'+'a'.repeat(32),memberLine='U'+'b'.repeat(32);
@@ -57,24 +57,28 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
     });
    }
    assert.equal((await webhook('new-approved',row.id)).status,200);assert.equal(await balance(),500);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/ยืนยันจ่ายแต้มแล้ว/);
    assert.equal((await webhook('new-approved',row.id)).status,200);
    assert.equal((await webhook('new-approved-other-event',row.id)).status,200);assert.equal(await balance(),500);
    assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_audit WHERE request_id=$1',[row.id])).rows[0].n,1);
    assert.equal(delivery.filter(x=>x.to===memberLine).length,1);
    const reject=await createWithdrawal(db,member,50,'account 22',randomUUID(),recipients);
    assert.equal(await balance(),500);
-   assert.equal((await decideWithdrawal(db,admin,reject.id,'REJECTED')).status,'REJECTED');assert.equal(await balance(),500);
+   assert.equal((await processWithdrawalPostback(db,{webhookEventId:'new-rejected',userId:adminLine,data:`withdraw:v1:reject:${reject.id}`},{allowlist,fetch:fakeFetch})).result,'REJECTED');assert.equal(await balance(),500);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/ปฏิเสธคำขอถอน/);
    assert.equal((await decideWithdrawal(db,admin,reject.id,'REJECTED')).replayed,true);
    const tooLarge=await createWithdrawal(db,member,450,'account 33',randomUUID(),recipients);
    const other=await createWithdrawal(db,member,100,'account 44',randomUUID(),recipients);
    await decideWithdrawal(db,admin,other.id,'TRANSFERRED');assert.equal(await balance(),400);
    const blocked=await processWithdrawalPostback(db,{webhookEventId:'insufficient',userId:adminLine,data:`withdraw:v1:transfer:${tooLarge.id}`},{allowlist,fetch:fakeFetch});
    assert.equal(blocked.result,'BLOCKED_INSUFFICIENT');assert.equal(await balance(),400);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/ยอดแต้มไม่พอ/);
    assert.equal((await db.query('SELECT status FROM member_withdrawal_requests WHERE id=$1',[tooLarge.id])).rows[0].status,'PENDING');
    assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_audit WHERE request_id=$1',[tooLarge.id])).rows[0].n,0);
-   assert.equal((await decideWithdrawal(db,admin,old100,'TRANSFERRED')).status,'TRANSFERRED');assert.equal(await balance(),400);
+   assert.equal((await processWithdrawalPostback(db,{webhookEventId:'old-approved',userId:adminLine,data:`withdraw:v1:transfer:${old100}`},{allowlist,fetch:fakeFetch})).result,'TRANSFERRED');assert.equal(await balance(),400);
    assert.equal((await decideWithdrawal(db,admin,old100,'TRANSFERRED')).replayed,true);assert.equal(await balance(),400);
-   assert.equal((await decideWithdrawal(db,admin,old300,'REJECTED')).status,'REJECTED');assert.equal(await balance(),700);
+   assert.equal((await processWithdrawalPostback(db,{webhookEventId:'old-rejected',userId:adminLine,data:`withdraw:v1:reject:${old300}`},{allowlist,fetch:fakeFetch})).result,'REJECTED');assert.equal(await balance(),700);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/คืน 300 แต้มแล้ว/);
    assert.equal((await decideWithdrawal(db,admin,old300,'REJECTED')).replayed,true);assert.equal(await balance(),700);
    const rollback=await createWithdrawal(db,member,60,'rollback fixture',randomUUID(),recipients);
    await db.query("CREATE FUNCTION fail_withdrawal_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic_audit_failure'; END $$");
@@ -84,8 +88,21 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    assert.equal((await db.query('SELECT status FROM member_withdrawal_requests WHERE id=$1',[rollback.id])).rows[0].status,'PENDING');
    assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_audit WHERE request_id=$1',[rollback.id])).rows[0].n,0);
    await db.query('DROP TRIGGER fail_withdrawal_audit ON member_withdrawal_audit');
+   await db.query("CREATE FUNCTION fail_withdrawal_postback() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic_postback_failure'; END $$");
+   await db.query('CREATE TRIGGER fail_withdrawal_postback BEFORE INSERT ON member_withdrawal_postbacks FOR EACH ROW EXECUTE FUNCTION fail_withdrawal_postback()');
+   await assert.rejects(processWithdrawalPostback(db,{webhookEventId:'atomic-failure',userId:adminLine,data:`withdraw:v1:transfer:${rollback.id}`},{allowlist,fetch:fakeFetch}),/synthetic_postback_failure/);
+   assert.equal(await balance(),700);
+   assert.equal((await db.query('SELECT status FROM member_withdrawal_requests WHERE id=$1',[rollback.id])).rows[0].status,'PENDING');
+   assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_audit WHERE request_id=$1',[rollback.id])).rows[0].n,0);
+   assert.equal((await db.query("SELECT count(*)::int n FROM line_webhook_events WHERE event_id='atomic-failure'")).rows[0].n,0);
+   await db.query('DROP TRIGGER fail_withdrawal_postback ON member_withdrawal_postbacks');
+   const recovered=await processWithdrawalPostback(db,{webhookEventId:'atomic-failure',userId:adminLine,data:`withdraw:v1:transfer:${rollback.id}`},{allowlist,fetch:fakeFetch});
+   assert.equal(recovered.result,'TRANSFERRED');assert.equal(await balance(),640);
+   assert.equal((await db.query("SELECT processing_status FROM line_webhook_events WHERE event_id='atomic-failure'")).rows[0].processing_status,'PROCESSED');
+   assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_postbacks WHERE request_id=$1',[rollback.id])).rows[0].n,1);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/ยืนยันจ่ายแต้มแล้ว/);
    const forbidden=await processWithdrawalPostback(db,{webhookEventId:'unauthorized',userId:'U'+'c'.repeat(32),data:`withdraw:v1:transfer:${rollback.id}`},{allowlist,fetch:fakeFetch});
-   assert.equal(forbidden.result,'FORBIDDEN');assert.equal(await balance(),700);
+   assert.equal(forbidden.result,'FORBIDDEN');assert.equal(await balance(),640);
   }finally{
    if(oldLogin===undefined)delete process.env.LINE_LOGIN_CHANNEL_ID;else process.env.LINE_LOGIN_CHANNEL_ID=oldLogin;
    if(oldToken===undefined)delete process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;else process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=oldToken;
