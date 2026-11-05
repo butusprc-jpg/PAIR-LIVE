@@ -13,6 +13,17 @@ export function lineAdminRecipients(raw:string|undefined):string[]{
   return [...new Set(entries.filter((e:unknown):e is {userId:string;role:string}=>!!e&&typeof e==='object'&&'role' in e&&'userId' in e&&e.role==='admin'&&typeof e.userId==='string'&&/^U[0-9a-f]{32}$/i.test(e.userId)).map(e=>e.userId))];
  }catch{return []}
 }
+export async function activeLineAdminRecipients(pool:Pool,raw:string|undefined):Promise<string[]>{
+ const channel=process.env.LINE_LOGIN_CHANNEL_ID;
+ if(!channel)return [];
+ const legacy=lineAdminRecipients(raw);
+ const result=await pool.query<{provider_user_id:string;role:string|null;status:string}>("SELECT provider_user_id,role,status FROM admin_identities WHERE provider='line' AND provider_channel_id=$1",[channel]);
+ const known=new Map(result.rows.map(row=>[row.provider_user_id,row]));
+ return [...new Set([...legacy,...result.rows.map(row=>row.provider_user_id)])].filter(userId=>{
+  const row=known.get(userId);
+  return !row?legacy.includes(userId):row.status==='active'&&(row.role==='admin'||row.role===null&&legacy.includes(userId));
+ });
+}
 export type LineNotifyOutcome={configured:boolean;sent:number;pending:number;failed:number};
 type QueueRow={id:string;request_id:string;recipient_user_id:string;requested_points:number;display_name:string;created_at:Date;status:string;has_slip:boolean;attempts:number};
 async function scoped<T>(pool:Pool,action:(client:import('pg').PoolClient)=>Promise<T>):Promise<T>{

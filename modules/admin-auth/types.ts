@@ -4,7 +4,7 @@ export type Result<T> = {ok:true;value:T} | {ok:false;error:AdminErrorCode};
 export interface LineIdentity {provider:'line';providerChannelId:string;providerUserId:string;displayName:string;avatarUrl:string|null}
 export interface LineIdentityProvider {verify(token:string, channelId:string):Promise<LineIdentity>}
 export interface AdminAllowlistEntry {userId:string;role:AdminRole}
-export interface AdminIdentity extends LineIdentity {id:string;status:'active'|'disabled'}
+export interface AdminIdentity extends LineIdentity {id:string;status:'active'|'disabled';role?:AdminRole|null}
 export interface VerifiedAdminIdentity {readonly identity:AdminIdentity;readonly role:AdminRole}
 export interface AdminProfile {id:string;displayName:string;avatarUrl:string|null;role:AdminRole}
 export interface AdminSession {tokenHash:string;adminId:string;createdAt:number;expiresAt:number;revokedAt:number|null}
@@ -14,7 +14,8 @@ export interface AdminChallenge {tokenHash:string;sessionHash:string|null;purpos
 export interface AdminAuditEvent {adminId:string;action:'login'|'logout'|'revoke';createdAt:number;details:Record<string,string>}
 export interface AdminDatabase {
  /** Called only AFTER server-side verification and explicit allowlist authorization. Never enable a disabled identity. */
- upsertAllowedIdentity(identity:LineIdentity, now:number):Promise<AdminIdentity>;
+ upsertAllowedIdentity(identity:LineIdentity, now:number, bootstrapRole?:AdminRole):Promise<AdminIdentity>;
+ findVerifiedIdentity?(identity:LineIdentity):Promise<AdminIdentity|null>;
  findIdentity(id:string):Promise<AdminIdentity|null>;
  audit(event:AdminAuditEvent):Promise<void>;
 }

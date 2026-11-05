@@ -21,7 +21,8 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
   await pool.query(`CREATE SCHEMA ${schema}`);
   const url=new URL(raw!);url.searchParams.set('options',`-csearch_path=${schema}`);
   db=new Pool({connectionString:url.toString(),max:1,connectionTimeoutMillis:1000});
-  const migrations=await migrationManifest();for(const m of migrations.slice(0,-1))await db.query(m.sql);
+  const migrations=await migrationManifest();const debitMigration=migrations.findIndex(m=>m.path==='migrations/017_withdrawal_debit_timing.sql');
+  for(const m of migrations.slice(0,debitMigration))await db.query(m.sql);
   const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Withdraw fixture',1000) RETURNING id")).rows[0].id;
   const adminLine='U'+'a'.repeat(32),memberLine='U'+'b'.repeat(32);
   const admin=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name,status) VALUES('line','test',$1,'Admin','active') RETURNING id",[adminLine])).rows[0].id;
@@ -29,7 +30,7 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
   const old100=(await db.query("INSERT INTO member_withdrawal_requests(member_id,requested_points,payout_details,idempotency_key) VALUES($1,100,'old 100',$2) RETURNING id",[member,randomUUID()])).rows[0].id;
   const old300=(await db.query("INSERT INTO member_withdrawal_requests(member_id,requested_points,payout_details,idempotency_key) VALUES($1,300,'old 300',$2) RETURNING id",[member,randomUUID()])).rows[0].id;
   await db.query('UPDATE members SET demo_points=600 WHERE id=$1',[member]);
-  await db.query(migrations.at(-1)!.sql);
+  for(const m of migrations.slice(debitMigration))await db.query(m.sql);
   assert.deepEqual((await db.query('SELECT DISTINCT debit_timing FROM member_withdrawal_requests')).rows,[{debit_timing:'PREDEBIT'}]);
   const balance=async()=>Number((await db!.query('SELECT demo_points FROM members WHERE id=$1',[member])).rows[0].demo_points);
   const oldLogin=process.env.LINE_LOGIN_CHANNEL_ID,oldToken=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;

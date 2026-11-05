@@ -15,3 +15,11 @@
 .camera-control{grid-column:1/-1}.camera-preview{aspect-ratio:16/9;background:#0c1627;border-radius:14px;position:relative;overflow:hidden}.camera-preview video,.viewer-video{width:100%;height:100%;object-fit:cover}.viewer-video{position:absolute;inset:0}.camera-preview-label{position:absolute;left:12px;bottom:12px;background:#000a;color:#fff;border-radius:8px;padding:7px 10px;font-size:12px}.camera-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:15px}.camera-controls button{display:flex;justify-content:center;align-items:center;gap:7px;min-height:45px}.camera-control h2{margin:0}.camera-control .footnote{margin-bottom:0}@media(max-width:600px){.camera-controls{grid-template-columns:1fr 1fr}.camera-controls button{font-size:12px;padding:10px 5px}}
 .admin-round-settings{grid-column:1/-1}
 .admin-report-card{grid-column:1/-1;min-width:0}.report-scroll{min-width:0;max-width:100%;overflow-x:auto}.report-table{width:100%;min-width:600px;border-collapse:collapse;text-align:left}.report-table th,.report-table td{padding:10px 12px;border-bottom:1px solid #40516a;white-space:nowrap}
+.admin-role-management{grid-column:1/-1;min-width:0;overflow-wrap:anywhere}
+.admin-role-management .list{min-width:0}.admin-role-management .item{min-width:0;overflow-wrap:anywhere}
+.admin-role-management .item small{display:block;margin-top:5px}
+.admin-role-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.admin-role-actions .field{width:auto;min-width:130px;flex:1}
+.admin-role-actions button{min-height:44px;white-space:normal}
+@media(max-width:430px){.admin-role-actions>*{width:100%!important;flex:auto!important}}
+@media(max-width:360px){.settings-grid{grid-template-columns:minmax(0,1fr)}.settings-grid>.card{min-width:0}.settings-grid>.card>*{min-width:0;max-width:100%;overflow-wrap:anywhere}}
