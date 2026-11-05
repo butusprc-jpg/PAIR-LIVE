@@ -28,3 +28,10 @@ main:has(.member-transfer){padding-bottom:calc(120px + env(safe-area-inset-botto
 .app:has(.member-transfer :is(input,textarea,select):focus) .bottom{display:none}
 .app:has(.member-transfer :is(input,textarea,select):focus) main{padding-bottom:calc(48px + env(safe-area-inset-bottom, 0px))}
 @media(max-width:600px){.member-transfer{scroll-margin-bottom:calc(24px + env(safe-area-inset-bottom, 0px))}}
+.admin-role-management{grid-column:1/-1;min-width:0;overflow-wrap:anywhere}
+.admin-role-management .list{min-width:0}.admin-role-management .item{min-width:0;overflow-wrap:anywhere}
+.admin-role-management .item small{display:block;margin-top:5px}
+.admin-role-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.admin-role-actions .field{width:auto;min-width:130px;flex:1}
+.admin-role-actions button{min-height:44px;white-space:normal}
+@media(max-width:430px){.admin-role-actions>*{width:100%!important;flex:auto!important}}
