@@ -16,3 +16,15 @@
 .admin-round-settings{grid-column:1/-1}
 .admin-report-card{grid-column:1/-1;min-width:0}.report-scroll{min-width:0;max-width:100%;overflow-x:auto}.report-table{width:100%;min-width:600px;border-collapse:collapse;text-align:left}.report-table th,.report-table td{padding:10px 12px;border-bottom:1px solid #40516a;white-space:nowrap}
 @media(max-width:360px){.settings-grid{grid-template-columns:minmax(0,1fr)}.settings-grid>.card{min-width:0}.settings-grid>.card>*{min-width:0;max-width:100%;overflow-wrap:anywhere}}
+/* Keep member transfer actions clear of the fixed navigation and the mobile keyboard. */
+main:has(.member-transfer){padding-bottom:calc(120px + env(safe-area-inset-bottom, 0px))}
+.member-transfer,.member-transfer *{min-width:0}
+.member-transfer{overflow-wrap:anywhere}
+.member-transfer .field{max-width:100%}
+.member-transfer button{min-height:44px;max-width:100%;white-space:normal}
+.member-transfer .item{overflow-wrap:anywhere}
+.item[role="dialog"]{min-width:0;overflow-wrap:anywhere}
+.item[role="dialog"]>.secondary{min-height:44px;margin-top:10px}
+.app:has(.member-transfer :is(input,textarea,select):focus) .bottom{display:none}
+.app:has(.member-transfer :is(input,textarea,select):focus) main{padding-bottom:calc(48px + env(safe-area-inset-bottom, 0px))}
+@media(max-width:600px){.member-transfer{scroll-margin-bottom:calc(24px + env(safe-area-inset-bottom, 0px))}}
