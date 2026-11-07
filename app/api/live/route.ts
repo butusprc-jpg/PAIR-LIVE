@@ -1,4 +1,6 @@
 import {currentMember} from '../../../lib/server/auth-http';
-import {readExternalLive} from '../../../lib/server/external-live';
+import {database} from '../../../lib/server/db';
+import {memberLive} from '../../../modules/external-live/server/service';
+import {LiveError} from '../../../modules/external-live/types';
 export const runtime='nodejs';
-export async function GET(){try{if(!await currentMember())return Response.json({error:'not_authenticated'},{status:401});const state=await readExternalLive();return Response.json({status:state.status,provider:state.status==='LIVE'?state.provider:null,embedUrl:state.status==='LIVE'?state.embedUrl:null},{headers:{'Cache-Control':'private, no-store'}})}catch{return Response.json({error:'live_unavailable'},{status:503})}}
+export async function GET(){try{const member=await currentMember();if(!member)return Response.json({error:'not_authenticated'},{status:401});return Response.json(await memberLive(database(),member),{headers:{'Cache-Control':'private, no-store'}})}catch(error){return Response.json({error:error instanceof LiveError?error.code:'live_unavailable'},{status:error instanceof LiveError?error.status:503})}}

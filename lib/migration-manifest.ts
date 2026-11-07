@@ -31,6 +31,7 @@ export const migrationPaths=[
  'migrations/024_oa_pause_remove.sql',
  'migrations/025_round_countdown_member_line.sql',
  'migrations/026_round_reset_epoch.sql',
+ 'migrations/028_external_live_tenants.sql',
 ] as const;
 export async function migrationManifest(root=process.cwd()){return Promise.all(migrationPaths.map(async path=>{const sql=await readFile(resolve(root,path),'utf8');return {path,sql,sha256:createHash('sha256').update(sql).digest('hex')}}))}
 export function assertTestTarget(raw:string|undefined){if(!raw)throw new Error('test_database_url_missing');let url:URL;try{url=new URL(raw)}catch{throw new Error('invalid_test_database_url')}if(!['postgres:','postgresql:'].includes(url.protocol)||!['localhost','127.0.0.1','::1'].includes(url.hostname)||url.pathname!=='/pair_live_migration_test')throw new Error('test_target_guard_rejected');return raw}

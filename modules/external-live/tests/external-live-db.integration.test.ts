@@ -1,0 +1,25 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {randomUUID,createHash} from 'node:crypto';import {Pool} from 'pg';
+import {assertTestTarget,migrationManifest} from '../../../lib/migration-manifest';
+import {readLive,changeLive} from '../server/store';import {connectedOa} from '../server/authorization';import {memberLive} from '../server/service';
+const raw=process.env.TOPUP_TEST_DATABASE_URL;
+test('isolated OA state, revision, rollback, and bound LINE identity',{skip:!raw},async()=>{
+ const pool=new Pool({connectionString:assertTestTarget(raw),max:12}),schema='external_live_test_'+randomUUID().replaceAll('-','');let db:Pool|undefined;
+ const env={login:process.env.LINE_LOGIN_CHANNEL_ID,oa:process.env.CONNECTED_LINE_OA_ID,token:process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN};
+ try{await pool.query(`CREATE SCHEMA ${schema}`);const url=new URL(raw!);url.searchParams.set('options',`-csearch_path=${schema}`);db=new Pool({connectionString:url.toString(),max:12});for(const m of await migrationManifest())await db.query(m.sql);
+ const token='synthetic-token',hash=createHash('sha256').update(token).digest('hex');
+ const a=(await db.query("INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES('oa-A','A',true,now()+interval '1 day',$1) RETURNING id",[hash])).rows[0].id;
+ const b=(await db.query("INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES('oa-B','B',true,now()+interval '1 day',$1) RETURNING id",[hash])).rows[0].id;
+ process.env.LINE_LOGIN_CHANNEL_ID='channel-A';process.env.CONNECTED_LINE_OA_ID='oa-A';process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=token;
+ assert.equal((await connectedOa(db,'channel-A')).id,a);await assert.rejects(connectedOa(db,'channel-B'),/oa_binding_unverified/);
+ const saved=await changeLive(db,a,true,'admin-A',{action:'save',url:'https://youtube.com/live/abcdefghijk',revision:0});assert.equal(saved.status,'READY');assert.equal(saved.revision,1);assert.equal((await readLive(db,b,true)).status,'OFFLINE');
+ const scoped=await db.connect();try{await scoped.query('BEGIN');await scoped.query(`CREATE ROLE external_live_reader_${schema} NOLOGIN`);await scoped.query(`GRANT USAGE ON SCHEMA ${schema} TO external_live_reader_${schema}`);await scoped.query(`GRANT SELECT ON external_live_tenants TO external_live_reader_${schema}`);await scoped.query(`SET LOCAL ROLE external_live_reader_${schema}`);await scoped.query("SELECT set_config('pair_live.external_live_oa',$1,true)",[b]);assert.equal((await scoped.query('SELECT * FROM external_live_tenants WHERE oa_id=$1',[a])).rowCount,0)}finally{await scoped.query('ROLLBACK');scoped.release()}
+ const pair=await Promise.allSettled([changeLive(db,a,true,'admin-A',{action:'start',revision:1}),changeLive(db,a,true,'admin-A',{action:'start',revision:1})]);assert.equal(pair.filter(x=>x.status==='fulfilled').length,1);assert.equal(pair.filter(x=>x.status==='rejected').length,1);
+ const playing=await readLive(db,a,true);assert.equal(playing.status,'SHOWING');assert.ok(playing.embedUrl?.endsWith('/abcdefghijk'));
+ assert.equal((await memberLive(db,{provider:'line',provider_channel_id:'channel-A'})).status,'SHOWING');await assert.rejects(memberLive(db,{provider:'line',provider_channel_id:'channel-B'}),/oa_binding_unverified/);
+ assert.equal((await db.query('SELECT count(*)::int AS count FROM external_live_tenant_audit WHERE oa_id=$1',[a])).rows[0].count,2);
+ await db.query("CREATE FUNCTION fail_live_audit() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'forced_live_audit_failure'; END$$");await db.query('CREATE TRIGGER fail_live_audit BEFORE INSERT ON external_live_tenant_audit FOR EACH ROW EXECUTE FUNCTION fail_live_audit()');
+ await assert.rejects(changeLive(db,a,true,'admin-A',{action:'stop',revision:2}),/forced_live_audit_failure/);assert.equal((await readLive(db,a,true)).revision,2);await db.query('DROP TRIGGER fail_live_audit ON external_live_tenant_audit');
+ const stopped=await changeLive(db,a,true,'admin-A',{action:'stop',revision:2});assert.equal(stopped.status,'OFFLINE');assert.equal((await readLive(db,a,true)).status,'OFFLINE');
+ const next=await changeLive(db,a,true,'admin-A',{action:'start',revision:3});assert.equal(next.status,'SHOWING');await db.query('UPDATE oa_service_control SET paused=true WHERE id=$1',[a]);assert.equal((await readLive(db,a,false)).status,'OFFLINE');await db.query('UPDATE oa_service_control SET paused=false WHERE id=$1',[a]);assert.equal((await readLive(db,a,true)).status,'OFFLINE');assert.equal((await readLive(db,b,true)).status,'OFFLINE');
+ }finally{if(env.login===undefined)delete process.env.LINE_LOGIN_CHANNEL_ID;else process.env.LINE_LOGIN_CHANNEL_ID=env.login;if(env.oa===undefined)delete process.env.CONNECTED_LINE_OA_ID;else process.env.CONNECTED_LINE_OA_ID=env.oa;if(env.token===undefined)delete process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;else process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=env.token;await db?.end();await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await pool.end()}
+});

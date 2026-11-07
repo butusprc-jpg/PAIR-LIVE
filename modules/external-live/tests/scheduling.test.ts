@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {phase} from '../server/scheduling';
+const start=new Date('2026-01-01T00:00:00Z'),at=(s:number)=>new Date(start.getTime()+s*1000);
+test('auto shows 90 seconds, rests, repeats from server anchor',()=>{assert.equal(phase('SHOWING','AUTO',start,90,30,at(89)).status,'SHOWING');assert.equal(phase('SHOWING','AUTO',start,90,30,at(90)).status,'INTERMISSION');assert.equal(phase('SHOWING','AUTO',start,90,30,at(120)).status,'SHOWING');assert.equal(phase('SHOWING','AUTO',start,90,30,at(120)).phaseEndsAt?.toISOString(),at(210).toISOString())});
+test('manual expires without restarting, stopped stays offline',()=>{assert.equal(phase('SHOWING','MANUAL',start,90,30,at(90)).status,'READY');assert.equal(phase('OFFLINE','AUTO',start,90,30,at(120)).status,'OFFLINE')});

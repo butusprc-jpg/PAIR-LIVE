@@ -6,7 +6,7 @@
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts modules/external-live/tests/*.test.ts",
     "round:worker": "tsx scripts/round-worker.ts",
     "round:duration": "tsx scripts/round-settings.ts",
     "notification:worker": "tsx scripts/notification-worker.ts",
