@@ -12,9 +12,18 @@ BEGIN
   AND (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole)) THEN
   RAISE EXCEPTION 'round_reset_role_not_restricted';
  END IF;
- IF EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid
-  WHERE r.rolname='pair_round_reset_counter') THEN
-  RAISE EXCEPTION 'round_reset_counter_role_has_members';
+ -- Neon grants the database owner ADMIN membership when a role is created.
+ -- That grant cannot SET or inherit this role. Reject every other member,
+ -- including indirect membership through the database owner.
+ IF EXISTS (SELECT 1 FROM pg_auth_members a JOIN pg_roles r ON r.oid=a.roleid
+  JOIN pg_roles member ON member.oid=a.member
+  JOIN pg_database db ON db.datname=current_database()
+  WHERE r.rolname IN ('pair_round_reset_counter','pair_round_reset_executor')
+   AND NOT (a.member=db.datdba AND member.rolcreaterole AND member.rolbypassrls
+    AND NOT a.inherit_option AND NOT a.set_option))
+  OR EXISTS (SELECT 1 FROM pg_auth_members a JOIN pg_database db ON db.datname=current_database()
+   WHERE a.roleid=db.datdba) THEN
+  RAISE EXCEPTION 'round_reset_role_untrusted_member';
  END IF;
 END $$;
 
@@ -48,7 +57,11 @@ DO $$
 BEGIN
  EXECUTE format('ALTER FUNCTION %I.round_reset_counts(bigint) SET search_path = pg_catalog,%I',current_schema(),current_schema());
 END $$;
+-- Neon gives the owner ADMIN but not SET membership; temporarily allow SET
+-- for ownership transfer, then remove that grant before commit.
+GRANT pair_round_reset_counter TO CURRENT_USER WITH SET TRUE;
 ALTER FUNCTION round_reset_counts(bigint) OWNER TO pair_round_reset_counter;
+REVOKE pair_round_reset_counter FROM CURRENT_USER;
 REVOKE ALL ON FUNCTION round_reset_counts(bigint) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION round_reset_counts(bigint) TO pair_round_reset_executor;
 DO $$
