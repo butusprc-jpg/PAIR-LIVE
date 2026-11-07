@@ -1,3 +1,5 @@
+> Historical context: the integration removed the LiveKit runtime. Current LIVE behavior is in [External LIVE URL V7](external-live-v7.md).
+
 # OCR scale reading — work 5/8
 
 Tesseract CLI (English, page segmentation 7) reads real PNG frames after an ImageMagick ROI crop, grayscale conversion, contrast stretch and despeckle. The OCR adapter is separate from `CameraControl.tsx`. Its output keeps raw OCR text, normalized display text, confidence and crop. The pure parser accepts one unsigned number with an optional decimal point. It takes the final displayed digit from the string, never from a rounded float. Ambiguous text is rejected.

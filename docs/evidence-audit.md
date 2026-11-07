@@ -1,3 +1,5 @@
+> Historical context: the integration removed the LiveKit runtime. Current LIVE behavior is in [External LIVE URL V7](external-live-v7.md).
+
 # Evidence, round statistics, and result audit — work 6/8
 
 ## What is active
