@@ -1,11 +1,9 @@
 import 'server-only';
-import {scrypt as scryptCallback, randomBytes, timingSafeEqual, createHash} from 'node:crypto';
-import {promisify} from 'node:util';
+import {scryptSync, randomBytes, timingSafeEqual, createHash} from 'node:crypto';
 import {database} from '../server/db';
 import {OwnerError} from './errors';
 import {sameOrigin} from '../server/auth-http';
 
-const scrypt=promisify(scryptCallback);
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const newToken=()=>randomBytes(32).toString('base64url');
 const cookie=(name:string,value:string,maxAge:number)=>`${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${process.env.NODE_ENV==='production'?'; Secure':''}`;
@@ -14,7 +12,7 @@ const equals=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);retur
 const validEmail=(v:unknown)=>typeof v==='string'&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)&&v.length<=254&&v===v.toLowerCase();
 const passPolicy=(v:unknown)=>typeof v==='string'&&v.length>=12&&v.length<=128&&/[A-Za-z]/.test(v)&&/[0-9]/.test(v);
 type Account={email:string;password_salt:string;password_hash:string;must_change_password:boolean;failed_attempts:number;locked_until:Date|null};
-export async function derivePassword(password:string,salt:string){return (await scrypt(password,Buffer.from(salt,'hex'),64)).toString('hex')}
+export async function derivePassword(password:string,salt:string){return scryptSync(password,Buffer.from(salt,'hex'),64).toString('hex')}
 async function csrf(request:Request,sessionHash:string|null){if(!sameOrigin(request))throw new OwnerError('csrf_origin');const csrfCookie=readCookie(request,'pair_owner_csrf'),csrfHeader=request.headers.get('x-owner-csrf')||'';if(!csrfCookie||!equals(csrfCookie,csrfHeader))throw new OwnerError('csrf_invalid');const deleted=await database().query('DELETE FROM owner_csrf_challenges WHERE token_hash=$1 AND session_hash IS NOT DISTINCT FROM $2 AND expires_at>now() RETURNING token_hash',[hash(csrfCookie),sessionHash]);if(!deleted.rowCount)throw new OwnerError('csrf_invalid')}
 export async function emailLogin(request:Request){
  if(Number(request.headers.get('content-length')||0)>2048)throw new OwnerError('request_too_large',413);
