@@ -45,7 +45,7 @@ export async function sendClosingBroadcast(job:BroadcastJob,token:string|undefin
 async function claim(pool:Pool):Promise<ClaimedJob|null>{
  const client=await pool.connect();try{await client.query('BEGIN');
   const selected=await client.query(`SELECT o.round_id,o.retry_key,o.attempts,r.closes_at,r.status AS round_status FROM round_line_broadcast_outbox o JOIN rounds r ON r.id=o.round_id
-   WHERE o.status IN ('PENDING','FAILED','UNKNOWN','SENDING') AND o.attempts<5 AND o.error_code IS DISTINCT FROM 'window_elapsed' AND o.error_code IS DISTINCT FROM 'round_not_open' AND o.next_attempt_at<=clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until<clock_timestamp())
+   WHERE r.epoch_id=current_round_epoch_id() AND o.status IN ('PENDING','FAILED','UNKNOWN','SENDING') AND o.attempts<5 AND o.error_code IS DISTINCT FROM 'window_elapsed' AND o.error_code IS DISTINCT FROM 'round_not_open' AND o.next_attempt_at<=clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until<clock_timestamp())
    ORDER BY o.next_attempt_at,o.round_id LIMIT 1 FOR UPDATE OF o SKIP LOCKED`);
   const row=selected.rows[0];if(!row){await client.query('COMMIT');return null}
   await client.query("UPDATE round_line_broadcast_outbox SET status='SENDING',attempts=attempts+1,lease_until=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp() WHERE round_id=$1",[row.round_id]);

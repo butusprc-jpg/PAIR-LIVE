@@ -46,7 +46,7 @@ export async function updateBusinessSetting(key:BusinessSettingKey,value:unknown
 }
 export async function businessSettingsOverview(){const client=await database().connect();try{
  await client.query('BEGIN READ ONLY');const settings=await readBusinessSettings(client);
- const active=await client.query("SELECT id,even_points,odd_points FROM rounds WHERE status IN ('OPEN','CLOSED','SCANNING','REVIEW_REQUIRED') ORDER BY id DESC LIMIT 1");
+ const active=await client.query("SELECT id,even_points,odd_points FROM rounds WHERE epoch_id=current_round_epoch_id() AND status IN ('OPEN','CLOSED','SCANNING','REVIEW_REQUIRED') ORDER BY id DESC LIMIT 1");
  const row=active.rows[0];const applied=row?await appliedBusinessSettings(client,String(row.id)):null;
  const now=(await client.query('SELECT clock_timestamp() AS now')).rows[0].now as Date;
  await client.query('COMMIT');

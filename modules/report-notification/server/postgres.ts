@@ -16,10 +16,10 @@ const safeErrorCode=(value:string|null)=>value===null?null:/^[A-Z0-9_:-]{1,80}$/
 export function createPostgresReportReader(pool:Pick<Pool,'query'> & Partial<Pick<Pool,'connect'>>):ReportReader {
  if(!pool?.query)throw new Error('report_database_not_configured');
  return {
-  async getRound(roundId){if(!/^\d+$/.test(roundId))return null;const r=await pool.query<Row>("SELECT r.id,r.opens_at,r.closes_at,r.duration_minutes,r.status,r.settled_at,r.result_number,EXISTS(SELECT 1 FROM round_ocr_evidence e WHERE e.round_id=r.id AND e.verification_status='VERIFIED') AS has_evidence FROM rounds r WHERE r.id=$1",[roundId]);return r.rows[0]?round(r.rows[0]):null},
-  async listRoundsForBangkokDate(date){const r=await pool.query<Row>("SELECT r.id,r.opens_at,r.closes_at,r.duration_minutes,r.status,r.settled_at,r.result_number,EXISTS(SELECT 1 FROM round_ocr_evidence e WHERE e.round_id=r.id AND e.verification_status='VERIFIED') AS has_evidence FROM rounds r WHERE (r.opens_at AT TIME ZONE 'Asia/Bangkok')::date=$1::date ORDER BY r.opens_at,r.id",[date]);return r.rows.map(round)},
-  async getEntries(roundIds){if(roundIds.length===0)return [];if(roundIds.some(id=>!/^\d+$/.test(id)))throw new Error('invalid_round_id');const sql='SELECT round_id,member_id,side,demo_points,status FROM round_entries WHERE round_id=ANY($1::bigint[])';let r;if(pool.connect){const client=await pool.connect();try{await client.query('BEGIN READ ONLY');await client.query('SET LOCAL row_security=off');r=await client.query<Row>(sql,[roundIds]);await client.query('COMMIT')}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}else r=await pool.query<Row>(sql,[roundIds]);return r.rows.map((x):EntrySnapshot=>({roundId:String(x.round_id),memberId:String(x.member_id),side:x.side as EntrySnapshot['side'],demoPoints:Number(x.demo_points),status:String(x.status)}))},
-  async getDeliveryCounts(date){const r=await pool.query<Row>("SELECT count(*) FILTER (WHERE o.status='SENT')::int AS sent,count(*) FILTER (WHERE o.status='FAILED')::int AS failed FROM report_notification_outbox o JOIN report_notification_events e ON e.event_id=o.event_id WHERE (e.occurred_at AT TIME ZONE 'Asia/Bangkok')::date=$1::date",[date]);return {sent:Number(r.rows[0]?.sent||0),failed:Number(r.rows[0]?.failed||0)}},
+  async getRound(roundId){if(!/^\d+$/.test(roundId))return null;const r=await pool.query<Row>("SELECT r.id,r.opens_at,r.closes_at,r.duration_minutes,r.status,r.settled_at,r.result_number,EXISTS(SELECT 1 FROM round_ocr_evidence e WHERE e.round_id=r.id AND e.verification_status='VERIFIED') AS has_evidence FROM rounds r WHERE r.id=$1 AND r.epoch_id=current_round_epoch_id()",[roundId]);return r.rows[0]?round(r.rows[0]):null},
+  async listRoundsForBangkokDate(date){const r=await pool.query<Row>("SELECT r.id,r.opens_at,r.closes_at,r.duration_minutes,r.status,r.settled_at,r.result_number,EXISTS(SELECT 1 FROM round_ocr_evidence e WHERE e.round_id=r.id AND e.verification_status='VERIFIED') AS has_evidence FROM rounds r WHERE r.epoch_id=current_round_epoch_id() AND (r.opens_at AT TIME ZONE 'Asia/Bangkok')::date=$1::date ORDER BY r.opens_at,r.id",[date]);return r.rows.map(round)},
+  async getEntries(roundIds){if(roundIds.length===0)return [];if(roundIds.some(id=>!/^\d+$/.test(id)))throw new Error('invalid_round_id');const sql='SELECT x.round_id,x.member_id,x.side,x.demo_points,x.status FROM round_entries x JOIN rounds r ON r.id=x.round_id WHERE x.round_id=ANY($1::bigint[]) AND r.epoch_id=current_round_epoch_id()';let r;if(pool.connect){const client=await pool.connect();try{await client.query('BEGIN READ ONLY');await client.query('SET LOCAL row_security=off');r=await client.query<Row>(sql,[roundIds]);await client.query('COMMIT')}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}else r=await pool.query<Row>(sql,[roundIds]);return r.rows.map((x):EntrySnapshot=>({roundId:String(x.round_id),memberId:String(x.member_id),side:x.side as EntrySnapshot['side'],demoPoints:Number(x.demo_points),status:String(x.status)}))},
+  async getDeliveryCounts(date){const r=await pool.query<Row>("SELECT count(*) FILTER (WHERE o.status='SENT')::int AS sent,count(*) FILTER (WHERE o.status='FAILED')::int AS failed FROM report_notification_outbox o JOIN report_notification_events e ON e.event_id=o.event_id WHERE e.occurred_at >= (SELECT created_at FROM round_reset_epochs ORDER BY id DESC LIMIT 1) AND (e.round_id IS NULL OR EXISTS (SELECT 1 FROM rounds r WHERE r.id=CASE WHEN e.round_id ~ '^[0-9]+$' THEN e.round_id::bigint END AND r.epoch_id=current_round_epoch_id())) AND (e.occurred_at AT TIME ZONE 'Asia/Bangkok')::date=$1::date",[date]);return {sent:Number(r.rows[0]?.sent||0),failed:Number(r.rows[0]?.failed||0)}},
  };
 }
 
@@ -32,10 +32,12 @@ export function createPostgresNotificationStore(pool:Queryable):NotificationStor
   async claim(now,workerId,leaseMs,limit){
    if(!workerId||!Number.isInteger(leaseMs)||leaseMs<1000||!Number.isInteger(limit)||limit<1||limit>100)throw new Error('invalid_claim');
    const r=await pool.query<Row>(`WITH due AS (
-    SELECT id FROM report_notification_outbox
-    WHERE ((status IN ('PENDING','RETRY') AND next_attempt_at<=$1::timestamptz)
-      OR (status='PROCESSING' AND lease_until<=$1::timestamptz))
-    ORDER BY next_attempt_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT $4
+    SELECT o.id FROM report_notification_outbox o JOIN report_notification_events e ON e.event_id=o.event_id
+    WHERE (e.round_id IS NULL AND e.occurred_at >= (SELECT created_at FROM round_reset_epochs ORDER BY id DESC LIMIT 1)
+       OR EXISTS (SELECT 1 FROM rounds r WHERE r.id=CASE WHEN e.round_id ~ '^[0-9]+$' THEN e.round_id::bigint END AND r.epoch_id=current_round_epoch_id()))
+      AND ((o.status IN ('PENDING','RETRY') AND o.next_attempt_at<=$1::timestamptz)
+      OR (o.status='PROCESSING' AND o.lease_until<=$1::timestamptz))
+    ORDER BY o.next_attempt_at,o.created_at,o.id FOR UPDATE OF o SKIP LOCKED LIMIT $4
    ), claimed AS (
     UPDATE report_notification_outbox o SET status='PROCESSING',lease_owner=$2,lease_until=$1::timestamptz+($3::bigint*interval '1 millisecond'),updated_at=$1::timestamptz
     FROM due WHERE o.id=due.id RETURNING o.*
