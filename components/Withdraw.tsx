@@ -33,7 +33,7 @@ export function MemberWithdraw({onBalance}:{onBalance?:(value:number)=>void}={})
   <label>ข้อมูลรับแต้ม (ไม่เกิน 50 ตัวอักษร)
    <input className="field" type="text" maxLength={50} value={details} disabled={busy} onChange={e=>setDetails(e.target.value)}/>
   </label>
-  <p className="muted">ตัวอย่าง: กรอกเลขบัญชี หรือส่ง QR ให้แอดมินในแชท</p>
+  <p className="muted">กรอกข้อมูลรับแต้ม เช่น เลขบัญชี หรือแจ้ง QR กับแอดมินในแชท</p>
   <label>จำนวนแต้มที่ต้องการถอน
    <input className="field" type="number" inputMode="numeric" step="1" min="1" max={balance??undefined} value={points} disabled={busy} onChange={e=>setPoints(e.target.value)}/>
   </label>

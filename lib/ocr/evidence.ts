@@ -27,11 +27,6 @@ export class LocalEvidenceStorage implements EvidenceStorage {
  }
  async get(key:string){validKey(key);try{const data=await readFile(join(this.root,key));if(`${validatePng(data)}.png`!==key)throw new Error('evidence_integrity_failed');return data}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw error}}
 }
-export class FakeEvidenceStorage implements EvidenceStorage {
- private objects=new Map<string,Buffer>();
- async putImmutable(key:string,data:Buffer){validKey(key);if(`${validatePng(data)}.png`!==key)throw new Error('evidence_hash_mismatch');const old=this.objects.get(key);if(old&&!old.equals(data))throw new Error('evidence_collision');this.objects.set(key,Buffer.from(data))}
- async get(key:string){validKey(key);const data=this.objects.get(key);if(!data)return null;if(`${validatePng(data)}.png`!==key)throw new Error('evidence_integrity_failed');return Buffer.from(data)}
-}
 export async function storeEvidence(reading:OcrReading,storage:EvidenceStorage):Promise<EvidenceRecord>{
  if(!/^\d+$/.test(reading.frame.roundId)||!reading.frame.id||!Number.isFinite(Date.parse(reading.frame.capturedAt)))throw new Error('invalid_evidence_metadata');
  const originalSha256=validatePng(reading.frame.image),cropSha256=validatePng(reading.crop);const originalKey=`${originalSha256}.png`,cropKey=`${cropSha256}.png`;

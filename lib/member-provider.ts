@@ -3,7 +3,7 @@
  * lib/admin-session.ts and the LINE admin login route.
  * Authentication and member lookup must be implemented separately.
  */
-export type MemberProvider = 'line' | 'wechat' | 'demo';
+export type MemberProvider = 'line' | 'wechat';
 export interface ProviderIdentity {
   provider: MemberProvider;
   providerUserId: string;
@@ -18,12 +18,7 @@ export interface MemberProfile {
 }
 export interface MemberProfileGateway {
   getCurrentMember(): Promise<MemberProfile>;
-  findByProviderId(provider: Exclude<MemberProvider, 'demo'>, providerUserId: string, providerChannelId?: string): Promise<MemberProfile | null>;
+  findByProviderId(provider: MemberProvider, providerUserId: string, providerChannelId?: string): Promise<MemberProfile | null>;
   /** Resolve a returning OA user to the same internalMemberId; create only if absent. */
   resolveOrCreateMember(identity: ProviderIdentity): Promise<MemberProfile>;
 }
-export const mockMember: MemberProfile = {
-  internalMemberId: 'PL-000148',
-  identity: {provider: 'demo', providerUserId: 'demo-member-148', displayName: 'สมาชิก PAIR LIVE'},
-  demoPoints: 1250,
-};

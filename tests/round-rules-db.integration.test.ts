@@ -11,7 +11,7 @@ test('entry limits and last-minute alert persist and apply only to the next roun
  try{
   await db.query('TRUNCATE round_audit_logs,rounds CASCADE');
   await db.query('UPDATE round_settings SET duration_minutes=5 WHERE id=1');
-  const member=(await db.query("INSERT INTO members(display_name) VALUES('Rule fixture') RETURNING id")).rows[0].id;
+  const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Rule fixture',1250) RETURNING id")).rows[0].id;
   assert.deepEqual(await roundRuleSettings(),{minEntryPoints:1,maxEntryPoints:1000000,alertBeforeClose:true});
   const first=(await tickRoundEngine()).round!;
   await updateRoundRule('maxEntryPoints',100);

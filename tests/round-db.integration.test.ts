@@ -9,8 +9,8 @@ test('PostgreSQL round lifecycle, idempotency, ownership, restart and no result 
  const db=database();
  await db.query('TRUNCATE round_line_broadcast_outbox,round_audit_logs,rounds CASCADE');
  await db.query('UPDATE round_settings SET duration_minutes=5 WHERE id=1');
- const a=(await db.query("INSERT INTO members(display_name) VALUES('Test A') RETURNING id")).rows[0].id as string;
- const b=(await db.query("INSERT INTO members(display_name) VALUES('Test B') RETURNING id")).rows[0].id as string;
+ const a=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Test A',1250) RETURNING id")).rows[0].id as string;
+ const b=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Test B',1250) RETURNING id")).rows[0].id as string;
  let roundId:string|undefined;
  try{
   const initial=await tickRoundEngine();assert.equal(initial.round?.status,'OPEN');assert.equal(initial.round?.durationMinutes,5);

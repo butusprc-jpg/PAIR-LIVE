@@ -20,8 +20,8 @@ test('PostgreSQL reports use only stored requests, decisions, and round entries'
   const url=new URL(raw!);url.searchParams.set('options',`-csearch_path=${schema}`);
   db=new Pool({connectionString:url.toString(),max:2});
   for(const migration of await migrationManifest())await db.query(migration.sql);
-  const member=(await db.query("INSERT INTO members(display_name) VALUES('Synthetic report fixture') RETURNING id")).rows[0].id;
-  const other=(await db.query("INSERT INTO members(display_name) VALUES('Second synthetic fixture') RETURNING id")).rows[0].id;
+  const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Synthetic report fixture',1250) RETURNING id")).rows[0].id;
+  const other=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Second synthetic fixture',1250) RETURNING id")).rows[0].id;
   const admin=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name) VALUES('line','test',$1,'Report Admin') RETURNING id",['U'+'d'.repeat(32)])).rows[0].id;
   const topup=(await db.query('INSERT INTO member_topup_requests(member_id,requested_points,idempotency_key) VALUES($1,40,$2) RETURNING id',[member,randomUUID()])).rows[0].id;
   await db.query("UPDATE member_topup_requests SET status='APPROVED',approved_at=now(),approved_by=$2 WHERE id=$1",[topup,admin]);
