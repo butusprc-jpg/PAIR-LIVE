@@ -1,0 +1,15 @@
+# PAIR LIVE V7: External LIVE URL
+
+Admin/Operator saves a supported HTTPS embed URL, then chooses when PAIR LIVE exposes its player. The camera and actual broadcast run in an external mobile app. Starting here only switches the member player on. It does not start a camera, create a stream, alter a round, or change points.
+
+The allowlist accepts only canonical `https://www.youtube.com/embed/<11-character-id>` (normalized to `youtube-nocookie.com`), `https://www.youtube-nocookie.com/embed/<11-character-id>`, and `https://player.vimeo.com/video/<numeric-id>`. Share/watch/live links, query strings, ports, credentials, fragments, other hosts, and non-HTTPS URLs are rejected. This is an optional compatibility list; no provider is required or configured. Never put a stream key, password, or private publishing URL into this field. No server-side request is made to the URL.
+
+Migration `020_external_live.sql` follows the existing `019_round_line_broadcast.sql` and stores the URL and `OFFLINE`, `READY`, or `LIVE` independently of the round engine. `GET /api/admin/live` requires an admin session; `POST /api/admin/live` requires Admin/Operator and a one-use mutation CSRF challenge. Actions: `save` validates URL and sets READY; `start` requires a saved URL and sets LIVE; `stop` sets OFFLINE. `GET /api/live` requires a member session and returns the URL only while LIVE. Member and admin pages poll every five seconds and refresh after page reload. A local `ERROR` indicator covers invalid URL, request failure, or iframe error; it is not a persisted state.
+
+A provider may still deny iframe playback or fail inside LINE despite a valid embed URL. Browsers cannot reliably inspect cross-origin frame playback or detect every `X-Frame-Options`/CSP block. Treat video playback as **NOT TESTED** until a real provider embed is tested on LINE Android/iOS. Stop sharing immediately if the provider blocks playback; the member UI then hides the iframe on its next poll. Do not claim unsupported links work from URL validation alone.
+
+The V6 countdown uses the original `serverTime`, `opensAt`, and `closesAt` APIs and remains independent of this setting. Server entry rejection after closing also remains unchanged. LiveKit runtime modules, token/viewer/publisher APIs, UI controls and packages are removed. Older documents describing the former LiveKit prototype are historical and do not describe the V7 runtime.
+
+The newer LINE closing broadcast and Railway worker remain. The legacy explicit `POST /api/stream/activate` endpoint is still admin/operator and CSRF guarded; it now requires external LIVE status and starts a round only when called separately. Saving, starting, or stopping the external player never calls it. Historical `livekit` source values in round audit rows remain recognized solely for idempotent replay of old rounds.
+
+Apply migration 020 only through the reviewed migration process for the target environment. This branch must not deploy or touch production data automatically.

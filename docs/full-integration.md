@@ -1,3 +1,5 @@
+> Historical context: the integration removed the LiveKit runtime. Current LIVE behavior is in [External LIVE URL V7](external-live-v7.md).
+
 # PAIR LIVE V1.0 — work 8/8 integration status
 
 The Core branch imports `modules/admin-auth` from commit `3abc6f025990e342db4806aa4850fc1bd6ce7641` and `modules/report-notification` from commit `1d5a7d8e37bea510d4ae056f40cfd1b1aea184cb` as source trees, without a Git merge. The existing `modules/member-wallet` is reused. No production deployment, provider login, wallet cutover or result announcement is performed here.

@@ -4,7 +4,6 @@ import {RoundError,validateDuration,validateEntry} from './core';
 import type {EntryInput,Round} from './core';
 import {applyWalletMutationWithClient} from '../../modules/member-wallet/server/postgres';
 import {walletPathFromDatabase} from '../server/wallet-cutover';
-import {configuredAdapter} from '../stream/livekit';
 import {enqueueClosingBroadcast} from '../line/round-broadcast';
 import {appliedBusinessSettings,readBusinessSettings,shopStatusAt} from './business-settings';
 function asIso(value:unknown){return value instanceof Date?value.toISOString():new Date(String(value)).toISOString()}
@@ -58,13 +57,14 @@ export async function updateRoundRule(key:RoundRuleKey,value:number|boolean){
   return next;
  });
 }
-export async function tickRoundEngine(options:{requireLiveForAuto?:boolean;allowAutoStart?:boolean}={}){let live=true;if(options.requireLiveForAuto){const adapter=configuredAdapter();try{live=!!adapter&&await adapter.status()==='LIVE'}catch{live=false}}return inTransaction(async client=>{
+export async function tickRoundEngine(options:{requireLiveForAuto?:boolean;allowAutoStart?:boolean}={}){return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=await transition(client);
   if(current.round){await enqueueClosingBroadcast(client,current.round,current.serverTime);return current}
-  if(options.allowAutoStart===false||!live)return current;
+  if(options.allowAutoStart===false)return current;
+  if(options.requireLiveForAuto){const live=await client.query("SELECT status FROM external_live_settings WHERE id=1");if(live.rows[0]?.status!=='LIVE')return current;}
   if(await readRoundMode(client)==='manual')return current;
-  if(options.requireLiveForAuto){const prior=await client.query("SELECT a.details->>'source' AS source FROM rounds r JOIN round_audit_logs a ON a.round_id=r.id AND a.action='ROUND_OPENED' ORDER BY r.id DESC,a.id DESC LIMIT 1");if(!['livekit','livekit_auto'].includes(prior.rows[0]?.source))return current}
+  if(options.requireLiveForAuto){const prior=await client.query("SELECT a.details->>'source' AS source FROM rounds r JOIN round_audit_logs a ON a.round_id=r.id AND a.action='ROUND_OPENED' ORDER BY r.id DESC,a.id DESC LIMIT 1");if(!['livekit','livekit_auto','external_live','external_live_auto'].includes(prior.rows[0]?.source))return current}
   const business=await readBusinessSettings(client);
   if(shopStatusAt(business.shopHours,current.serverTime)==='CLOSED')return current;
   const rules=await readRules(client);
@@ -73,7 +73,7 @@ export async function tickRoundEngine(options:{requireLiveForAuto?:boolean;allow
   const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status)
   SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN' FROM t RETURNING *`,[duration]);
   const round=mapRound(inserted.rows[0]);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_OPENED',jsonb_build_object('duration_minutes',$2::int,'source',$3::text))",[round.id,duration,options.requireLiveForAuto?'livekit_auto':'scheduler']);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_OPENED',jsonb_build_object('duration_minutes',$2::int,'source',$3::text))",[round.id,duration,options.requireLiveForAuto?'external_live_auto':'scheduler']);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_BUSINESS_SETTINGS_APPLIED',$2::jsonb)",[round.id,JSON.stringify(business)]);
   await enqueueClosingBroadcast(client,round,await dbNow(client));
@@ -105,14 +105,14 @@ export async function startRoundForLive(actorId:string,idempotencyKey:string){
   const replay=await client.query("SELECT r.* FROM round_audit_logs a JOIN rounds r ON r.id=a.round_id WHERE a.action='ROUND_OPENED' AND a.details->>'live_start_key'=$1 ORDER BY a.id DESC LIMIT 1",[idempotencyKey]);
   if(replay.rows[0]){if(['SETTLED','CANCELLED'].includes(replay.rows[0].status))throw new RoundError('live_start_key_finished',409);return {round:await mapRoundWithRules(client,replay.rows[0]),serverTime:await dbNow(client),replayed:true}}
   const current=await transition(client);
-  if(current.round){const source=await client.query("SELECT details->>'source' AS source FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_OPENED' ORDER BY id DESC LIMIT 1",[current.round.id]);if(source.rows[0]?.source==='livekit'||source.rows[0]?.source==='livekit_auto')return {...current,replayed:true};throw new RoundError('round_already_active',409)}
+  if(current.round){const source=await client.query("SELECT details->>'source' AS source FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_OPENED' ORDER BY id DESC LIMIT 1",[current.round.id]);if(['livekit','livekit_auto','external_live','external_live_auto'].includes(source.rows[0]?.source))return {...current,replayed:true};throw new RoundError('round_already_active',409)}
   const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
   const duration=validateDuration(Number(setting.rows[0]?.duration_minutes??5));
   const rules=await readRules(client),business=await readBusinessSettings(client);
   const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status)
    SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN' FROM t RETURNING *`,[duration]);
   const round=mapRound(inserted.rows[0]);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_OPENED',jsonb_build_object('duration_minutes',$3::int,'live_start_key',$4::text,'source','livekit'))",[round.id,actorId,duration,idempotencyKey]);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_OPENED',jsonb_build_object('duration_minutes',$3::int,'live_start_key',$4::text,'source','external_live'))",[round.id,actorId,duration,idempotencyKey]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_BUSINESS_SETTINGS_APPLIED',$2::jsonb)",[round.id,JSON.stringify(business)]);
   await enqueueClosingBroadcast(client,round,await dbNow(client));

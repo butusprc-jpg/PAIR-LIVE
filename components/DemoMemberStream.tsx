@@ -1,5 +1,0 @@
-'use client';
-import {useEffect,useRef,useState} from 'react';
-import {Camera,Expand} from 'lucide-react';
-import {mockStreamBus} from '../lib/stream/mock';
-export default function DemoMemberStream({roundLabel,clock}:{roundLabel:string;clock:string}){const wrapper=useRef<HTMLDivElement>(null),video=useRef<HTMLVideoElement>(null),[active,setActive]=useState(false);useEffect(()=>mockStreamBus.subscribe(state=>{setActive(state.status==='DEMO_ACTIVE');if(video.current)video.current.srcObject=state.stream}),[]);return <div className="video" ref={wrapper}><video ref={video} className="viewer-video" autoPlay playsInline muted/><div className="video-top"><span className="tag">{active?'DEMO ACTIVE':'DEMO CAMERA'}</span><span className="tag">{roundLabel} · {clock}</span></div>{!active&&<div className="video-center"><Camera size={45}/><strong>DEMO CAMERA</strong><small>ภาพจำลองจากตาชั่งดิจิทัล</small></div>}<div className="video-bottom"><span className="tag">{active?'ภาพจากกล้องในแท็บนี้ · ไม่ใช่สตรีมจริง':'รอการเชื่อมต่อกล้องจริง'}</span><button aria-label="ขยายเต็มจอ" onClick={()=>wrapper.current?.requestFullscreen?.()}><Expand size={17}/></button></div></div>}
