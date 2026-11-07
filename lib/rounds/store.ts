@@ -1,4 +1,5 @@
 import type {PoolClient} from 'pg';
+import {createHash} from 'node:crypto';
 import {database} from '../server/db';
 import {RoundError,validateDuration,validateEntry} from './core';
 import type {EntryInput,Round} from './core';
@@ -22,6 +23,13 @@ async function appliedRules(client:PoolClient,roundId:string):Promise<RoundRules
  return result.rows[0]?.details??defaultRules;
 }
 async function mapRoundWithRules(client:PoolClient,row:Record<string,unknown>){const round=mapRound(row);return {...round,alertBeforeClose:(await appliedRules(client,round.id)).alertBeforeClose}}
+async function assertConnectedOaInTransaction(client:PoolClient){
+ const id=process.env.CONNECTED_LINE_OA_ID,token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
+ if(!id||!token)throw new RoundError('oa_binding_unverified',503);
+ const hash=createHash('sha256').update(token).digest('hex');
+ const result=await client.query('SELECT enabled,expires_at>now() AS active,verified_token_hash FROM oa_service_control WHERE line_oa_id=$1 FOR SHARE',[id]);
+ if(result.rowCount!==1||!result.rows[0].enabled||!result.rows[0].active||result.rows[0].verified_token_hash!==hash)throw new RoundError('oa_service_inactive',403);
+}
 async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
 async function dbNow(client:PoolClient){const result=await client.query('SELECT clock_timestamp() AS now');return new Date(result.rows[0].now).toISOString()}
 async function transition(client:PoolClient){
@@ -65,6 +73,7 @@ export async function tickRoundEngine(options:{requireLiveForAuto?:boolean;allow
   if(options.requireLiveForAuto){const live=await client.query("SELECT status FROM external_live_settings WHERE id=1");if(live.rows[0]?.status!=='LIVE')return current;}
   if(await readRoundMode(client)==='manual')return current;
   if(options.requireLiveForAuto){const prior=await client.query("SELECT a.details->>'source' AS source FROM rounds r JOIN round_audit_logs a ON a.round_id=r.id AND a.action='ROUND_OPENED' ORDER BY r.id DESC,a.id DESC LIMIT 1");if(!['livekit','livekit_auto','external_live','external_live_auto'].includes(prior.rows[0]?.source))return current}
+  await assertConnectedOaInTransaction(client);
   const business=await readBusinessSettings(client);
   if(shopStatusAt(business.shopHours,current.serverTime)==='CLOSED')return current;
   const rules=await readRules(client);
@@ -83,6 +92,7 @@ export async function startManualRound(adminId:string){
  if(!/^[0-9a-f-]{36}$/i.test(adminId))throw new RoundError('invalid_admin_id',403);
  return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
+  await assertConnectedOaInTransaction(client);
   if(await readRoundMode(client)!=='manual')throw new RoundError('manual_mode_required',409);
   const current=await transition(client);
   if(current.round)throw new RoundError('round_already_active',409);
@@ -102,6 +112,7 @@ export async function startRoundForLive(actorId:string,idempotencyKey:string){
  if(!/^[0-9a-f-]{36}$/i.test(actorId)||! /^[0-9a-f-]{36}$/i.test(idempotencyKey))throw new RoundError('invalid_live_start',400);
  return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
+  await assertConnectedOaInTransaction(client);
   const replay=await client.query("SELECT r.* FROM round_audit_logs a JOIN rounds r ON r.id=a.round_id WHERE a.action='ROUND_OPENED' AND a.details->>'live_start_key'=$1 ORDER BY a.id DESC LIMIT 1",[idempotencyKey]);
   if(replay.rows[0]){if(['SETTLED','CANCELLED'].includes(replay.rows[0].status))throw new RoundError('live_start_key_finished',409);return {round:await mapRoundWithRules(client,replay.rows[0]),serverTime:await dbNow(client),replayed:true}}
   const current=await transition(client);
@@ -134,6 +145,7 @@ export async function updateDurationForNextRound(duration:number){return updateR
 export async function submitDemoEntry(memberId:string,roundId:string,input:EntryInput){validateEntry(input);if(!/^\d+$/.test(roundId))throw new RoundError('invalid_round_id');return inTransaction(async client=>{
  await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);
  // Lock the round before checking database time; the worker takes the same lock when closing it.
+ await assertConnectedOaInTransaction(client);
  const found=await client.query('SELECT * FROM rounds WHERE id=$1 FOR UPDATE',[roundId]);
  if(!found.rows[0])throw new RoundError('round_not_found',404);
  const round=found.rows[0];
