@@ -15,7 +15,7 @@ export async function enqueueClosingBroadcast(client:PoolClient,round:{id:string
  return !!inserted.rowCount;
 }
 
-async function quotaAllows(token:string,fetcher:typeof fetch):Promise<boolean>{
+export async function quotaAllows(token:string,fetcher:typeof fetch):Promise<boolean>{
  const headers={Authorization:`Bearer ${token}`};
  const [quota,usage]=await Promise.all([
   fetcher('https://api.line.me/v2/bot/message/quota',{headers,signal:AbortSignal.timeout(5000)}),

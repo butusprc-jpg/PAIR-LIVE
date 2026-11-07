@@ -37,7 +37,7 @@ async function transition(client:PoolClient){
  const found=await client.query("SELECT * FROM rounds WHERE status IN ('OPEN','CLOSED','SCANNING','REVIEW_REQUIRED') ORDER BY id DESC LIMIT 1 FOR UPDATE");
  if(!found.rows[0])return {round:null as Round|null,serverTime:now};
  let row=found.rows[0];
- if(row.status==='OPEN'&&new Date(now)>=new Date(row.closes_at)){
+ if(row.status==='OPEN'&&(new Date(now)>=new Date(row.closes_at)||row.countdown_ends_at&&!row.countdown_stopped_at&&new Date(now)>=new Date(row.countdown_ends_at))){
   const changed=await client.query("UPDATE rounds SET status='CLOSED',closed_at=clock_timestamp() WHERE id=$1 AND status='OPEN' RETURNING *",[row.id]);row=changed.rows[0];
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action) VALUES($1,'engine','ROUND_CLOSED')",[row.id]);
  }else if(row.status==='CLOSED'){
@@ -152,7 +152,7 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  const prior=await client.query('SELECT * FROM round_entries WHERE member_id=$1 AND idempotency_key=$2',[memberId,input.idempotencyKey]);
  if(prior.rows[0]){const row=prior.rows[0];if(String(row.round_id)!==roundId||row.side!==input.side||Number(row.demo_points)!==input.demoPoints)throw new RoundError('idempotency_conflict',409);return {id:row.id,roundId:String(row.round_id),status:row.status,replayed:true}}
  const now=await dbNow(client);
- if(round.status!=='OPEN'||new Date(now)>=new Date(round.closes_at))throw new RoundError('round_closed',409);
+ if(round.status!=='OPEN'||new Date(now)>=new Date(round.closes_at)||round.countdown_ends_at&&!round.countdown_stopped_at&&new Date(now)>=new Date(round.countdown_ends_at))throw new RoundError('round_closed',409);
  const rules=await appliedRules(client,roundId);
  if(input.demoPoints<rules.minEntryPoints||input.demoPoints>rules.maxEntryPoints)throw new RoundError('entry_points_out_of_range');
  const business=await appliedBusinessSettings(client,roundId);
