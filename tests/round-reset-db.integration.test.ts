@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID,createHash} from 'node:crypto';
 import {database} from '../lib/server/db';
+import {Pool} from 'pg';
 import {assertTestTarget} from '../lib/migration-manifest';
 import {previewRoundReset,resetRoundEpoch} from '../lib/server/round-reset';
 import {currentRound,myRoundEntries,roundTotals,submitDemoEntry,tickRoundEngine} from '../lib/rounds/store';
@@ -12,6 +13,18 @@ import {dispatchCountdownLine} from '../lib/line/countdown-notify';
 
 test('concurrent epoch resets archive pending rounds once without changing points, ledger or broadcast history',{skip:!process.env.DATABASE_URL||process.env.PAIR_RESET_TEST_ISOLATED!=='1'},async()=>{
  assertTestTarget(process.env.DATABASE_URL);const db=database();
+ const role='reset_v12_'+randomUUID().replaceAll('-',''),password='local_'+randomUUID().replaceAll('-','');
+ await db.query(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '${password}'`);
+ await db.query(`GRANT pair_round_reset_executor TO ${role}`);
+ const url=new URL(process.env.DATABASE_URL!);url.username=role;url.password=password;const resetDb=new Pool({connectionString:url.toString(),ssl:false});
+ process.env.ROUND_RESET_DATABASE_URL=url.toString();
+ const flags=(await resetDb.query("SELECT r.rolsuper,r.rolbypassrls,r.rolcreaterole FROM pg_roles r WHERE r.rolname=current_user")).rows[0];
+ assert.deepEqual(flags,{rolsuper:false,rolbypassrls:false,rolcreaterole:false});
+ const internalRoles=(await db.query("SELECT rolcanlogin,rolsuper,rolbypassrls FROM pg_roles WHERE rolname IN ('pair_round_reset_counter','pair_round_reset_executor')")).rows;
+ assert.equal(internalRoles.length,2);assert.ok(internalRoles.every(row=>!row.rolcanlogin&&!row.rolsuper&&!row.rolbypassrls));
+ await assert.rejects(resetDb.query('SELECT count(*) FROM round_entries'),/permission denied/);
+ await assert.rejects(resetDb.query('UPDATE round_reset_epochs SET archived_entries=0 WHERE id=1'),/permission denied/);
+ await assert.rejects(resetDb.query('DELETE FROM round_reset_epochs WHERE id=1'),/permission denied/);
  const oa='@v9_'+randomUUID().slice(0,8),token='v9-isolated-token';
  process.env.CONNECTED_LINE_OA_ID=oa;
  process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=token;
@@ -19,6 +32,8 @@ test('concurrent epoch resets archive pending rounds once without changing point
  const admin=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name,role) VALUES('line','v9-test',$1,'V9 admin','admin') RETURNING id",[randomUUID()])).rows[0].id as string;
  const secondAdmin=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name,role) VALUES('line','v9-test',$1,'V9 second admin','admin') RETURNING id",[randomUUID()])).rows[0].id as string;
  const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('V9 member',200) RETURNING id")).rows[0].id as string;
+ const otherMember=(await db.query("INSERT INTO members(display_name) VALUES('Other OA member') RETURNING id")).rows[0].id as string;
+ await db.query("INSERT INTO member_identities(member_id,provider,provider_user_id,provider_channel_id) VALUES($1,'line',$2,'other-oa')",[otherMember,'U'+'b'.repeat(32)]);
  const wallet=(await db.query('INSERT INTO member_wallets(member_id,available_points) VALUES($1,200) RETURNING id',[member])).rows[0].id as string;
  await db.query("INSERT INTO member_wallet_ledger(member_id,wallet_id,type,points,balance_before,balance_after,reference_id,idempotency_key,audit_actor,audit_source) VALUES($1,$2,'DEMO_GRANT',200,0,200,'v9-fixture',$3,'v9-test','internal')",[member,wallet,randomUUID()]);
  await db.query('INSERT INTO member_topup_requests(member_id,requested_points,idempotency_key) VALUES($1,25,$2)',[member,randomUUID()]);
@@ -26,6 +41,21 @@ test('concurrent epoch resets archive pending rounds once without changing point
  const old=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status) VALUES((now() AT TIME ZONE 'Asia/Bangkok')::date,now(),now()+interval '5 minutes',5,'OPEN') RETURNING id,epoch_id")).rows[0];
  const oldId=String(old.id);assert.equal(String(old.epoch_id),'1');
  await db.query("INSERT INTO round_entries(round_id,member_id,side,demo_points,idempotency_key) VALUES($1,$2,'even',25,$3)",[oldId,member,randomUUID()]);
+ await db.query("INSERT INTO round_entries(round_id,member_id,side,demo_points,idempotency_key) VALUES($1,$2,'odd',5,$3)",[oldId,otherMember,randomUUID()]);
+ const memberRole='member_v12_'+randomUUID().replaceAll('-',''),memberPassword='local_'+randomUUID().replaceAll('-','');
+ await db.query(`CREATE ROLE ${memberRole} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '${memberPassword}'`);
+ await db.query(`GRANT USAGE ON SCHEMA public TO ${memberRole}`);
+ await db.query(`GRANT SELECT ON round_entries TO ${memberRole}`);
+ const memberUrl=new URL(process.env.DATABASE_URL!);memberUrl.username=memberRole;memberUrl.password=memberPassword;
+ const memberDb=new Pool({connectionString:memberUrl.toString(),ssl:false});
+ await assert.rejects(memberDb.query('SELECT * FROM round_reset_counts(NULL)'),/permission denied/);
+ const memberClient=await memberDb.connect();try{
+  await memberClient.query('BEGIN');await memberClient.query("SELECT set_config('pair_live.member_id',$1,true)",[member]);
+  assert.equal((await memberClient.query('SELECT count(*)::int AS n FROM round_entries')).rows[0].n,1);
+  await memberClient.query("SELECT set_config('pair_live.member_id',$1,true)",[otherMember]);
+  assert.equal((await memberClient.query('SELECT count(*)::int AS n FROM round_entries')).rows[0].n,1);
+  await memberClient.query('COMMIT');
+ }finally{memberClient.release();await memberDb.end()}
  await db.query('INSERT INTO round_line_broadcast_outbox(round_id) VALUES($1)',[oldId]);
  await db.query("UPDATE rounds SET countdown_started_at=now(),countdown_ends_at=now()+interval '2 minutes' WHERE id=$1",[oldId]);
  await db.query("INSERT INTO round_countdown_line_outbox(round_id,member_id,oa_id,recipient_user_id) VALUES($1,$2,$3,$4)",[oldId,member,oaId,'U'+'a'.repeat(32)]);
@@ -33,17 +63,17 @@ test('concurrent epoch resets archive pending rounds once without changing point
  await db.query("INSERT INTO report_notification_outbox(id,event_id,idempotency_key,channel,recipient_id,address) VALUES($1,$2,$3,'email','v9-recipient','test@example.invalid')",['v9-delivery-'+oldId,'v9-event-'+oldId,'v9-key-'+oldId]);
  const before=await db.query('SELECT m.demo_points,w.available_points,(SELECT count(*)::int FROM member_wallet_ledger WHERE member_id=m.id) AS ledger,(SELECT count(*)::int FROM member_topup_requests WHERE member_id=m.id) AS topups,(SELECT count(*)::int FROM member_withdrawal_requests WHERE member_id=m.id) AS withdrawals FROM members m JOIN member_wallets w ON w.member_id=m.id WHERE m.id=$1',[member]);
  const key=randomUUID();
- await assert.rejects(resetRoundEpoch(admin,key,'wrong'),/confirmation_required/);
- await assert.rejects(resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่'),/round_in_progress/);
+ await assert.rejects(resetRoundEpoch(admin,key,'wrong',resetDb),/confirmation_required/);
+ await assert.rejects(resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่',resetDb),/round_in_progress/);
  await db.query("UPDATE rounds SET status='SCANNING' WHERE id=$1",[oldId]);
  assert.equal((await db.query('SELECT status FROM rounds WHERE id=$1',[oldId])).rows[0].status,'SCANNING');
- const preview=await previewRoundReset();assert.equal(preview.rounds,1);assert.equal(preview.entries,1);assert.equal(preview.pendingEntries,1);
- const concurrent=await Promise.allSettled([resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่'),resetRoundEpoch(secondAdmin,key,'ยืนยันเริ่มใหม่')]);
+ const preview=await previewRoundReset();assert.equal(preview.rounds,1);assert.equal(preview.entries,2);assert.equal(preview.pendingEntries,2);
+ const concurrent=await Promise.allSettled([resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่'),resetRoundEpoch(secondAdmin,key,'ยืนยันเริ่มใหม่',resetDb)]);
  const accepted=concurrent.filter((outcome):outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof resetRoundEpoch>>>=>outcome.status==='fulfilled');
  assert.ok(accepted.length>=1);assert.ok(concurrent.every(outcome=>outcome.status==='fulfilled'||outcome.reason instanceof Error&&outcome.reason.message==='round_worker_busy'));
- const result=accepted.find(outcome=>!outcome.value.replayed)?.value;assert.ok(result);assert.equal(result.rounds,1);assert.equal(result.entries,1);
- assert.equal((await resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่')).replayed,true);
- assert.equal((await resetRoundEpoch(admin,randomUUID(),'ยืนยันเริ่มใหม่')).epochId,result.epochId);
+ const result=accepted.find(outcome=>!outcome.value.replayed)?.value;assert.ok(result);assert.equal(result.rounds,1);assert.equal(result.entries,2);
+ assert.equal((await resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่',resetDb)).replayed,true);
+ assert.equal((await resetRoundEpoch(admin,randomUUID(),'ยืนยันเริ่มใหม่',resetDb)).epochId,result.epochId);
  assert.equal((await db.query('SELECT count(*)::int AS n FROM round_reset_epochs')).rows[0].n,2);
  assert.equal((await currentRound()).round,null);
  assert.deepEqual(await myRoundEntries(member),[]);assert.equal((await db.query('SELECT count(*)::int AS n FROM rounds WHERE epoch_id=current_round_epoch_id()')).rows[0].n,0);
@@ -55,7 +85,7 @@ test('concurrent epoch resets archive pending rounds once without changing point
  assert.equal((await db.query('SELECT count(*)::int AS n FROM round_countdown_line_outbox WHERE round_id=$1',[oldId])).rows[0].n,1);
  assert.deepEqual(await createPostgresNotificationStore(db).claim(new Date().toISOString(),'v9-worker',5000,10),[]);
  assert.deepEqual((await db.query('SELECT m.demo_points,w.available_points,(SELECT count(*)::int FROM member_wallet_ledger WHERE member_id=m.id) AS ledger,(SELECT count(*)::int FROM member_topup_requests WHERE member_id=m.id) AS topups,(SELECT count(*)::int FROM member_withdrawal_requests WHERE member_id=m.id) AS withdrawals FROM members m JOIN member_wallets w ON w.member_id=m.id WHERE m.id=$1',[member])).rows,before.rows);
- assert.equal((await db.query('SELECT count(*)::int AS n FROM round_entries WHERE round_id=$1 AND status=$2',[oldId,'PENDING'])).rows[0].n,1);
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM round_entries WHERE round_id=$1 AND status=$2',[oldId,'PENDING'])).rows[0].n,2);
  assert.equal((await db.query('SELECT status FROM round_line_broadcast_outbox WHERE round_id=$1',[oldId])).rows[0].status,'PENDING');
  await assert.rejects(db.query("UPDATE round_entries SET status='CANCELLED' WHERE round_id=$1",[oldId]),/archived_round_entry_is_immutable/);
  await assert.rejects(db.query("INSERT INTO round_entries(round_id,member_id,side,demo_points,idempotency_key) VALUES($1,$2,'odd',5,$3)",[oldId,member,randomUUID()]),/archived_round_entry_is_immutable/);
@@ -65,5 +95,5 @@ test('concurrent epoch resets archive pending rounds once without changing point
  assert.equal((await db.query("SELECT count(*)::int AS n FROM round_audit_logs WHERE action='ROUND_EPOCH_RESET'")).rows[0].n,1);
  await db.query("UPDATE rounds SET status='SETTLED',settled_at=now() WHERE id=$1",[opened.round!.id]);
  await db.query('UPDATE oa_service_control SET enabled=false WHERE id=$1',[oaId]);
- await db.end();
+ await resetDb.end();await db.end();delete process.env.ROUND_RESET_DATABASE_URL;
 });
