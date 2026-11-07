@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {parseYouTubeId} from '../server/youtube-url';
+const id='abcdefghijk';
+test('accepts four YouTube URL forms',()=>{for(const url of [`https://youtube.com/watch?v=${id}`,`https://www.youtube.com/live/${id}`,`https://youtube.com/embed/${id}`,`https://youtu.be/${id}`])assert.equal(parseYouTubeId(url),id)});
+test('rejects wrong hosts, redirects, scripts and URL parameters',()=>{for(const url of [`https://youtube.com.evil.test/watch?v=${id}`,`javascript:alert(1)`,`http://youtube.com/watch?v=${id}`,`https://youtube.com/watch?v=${id}&next=https://evil.test`,`https://youtu.be/${id}?redirect=evil`,`https://youtube.com/embed/${id}#fragment`,`https://user:pass@youtube.com/live/${id}`,`https://youtube.com:444/live/${id}`,`https://www.youtube.com/watch?v=short`])assert.throws(()=>parseYouTubeId(url),/invalid_live_url/,url)});
