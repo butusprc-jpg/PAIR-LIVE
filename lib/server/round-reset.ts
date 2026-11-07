@@ -21,6 +21,8 @@ export async function resetRoundEpoch(actorId:string,resetKey:string,confirmatio
  const client=await database().connect();
  try{
   await client.query('BEGIN');
+  const epochLocked=await client.query('SELECT pg_try_advisory_xact_lock($1) AS locked',[74021602]);
+  if(!epochLocked.rows[0]?.locked)throw new Error('round_worker_busy');
   const locked=await client.query('SELECT pg_try_advisory_xact_lock($1) AS locked',[lockKey]);
   if(!locked.rows[0]?.locked)throw new Error('round_worker_busy');
   // Serialize a broadcast claim with the epoch change. A claimed in-flight
@@ -30,7 +32,7 @@ export async function resetRoundEpoch(actorId:string,resetKey:string,confirmatio
   await client.query('LOCK TABLE report_notification_outbox IN SHARE ROW EXCLUSIVE MODE');
   const replay=await client.query('SELECT id,archived_rounds,archived_entries FROM round_reset_epochs WHERE reset_key=$1',[resetKey]);
   if(replay.rows[0]){await client.query('COMMIT');return {epochId:String(replay.rows[0].id),rounds:Number(replay.rows[0].archived_rounds),entries:Number(replay.rows[0].archived_entries),replayed:true}}
-  const epoch=await client.query('SELECT id FROM round_reset_epochs ORDER BY id DESC LIMIT 1 FOR UPDATE');
+  const epoch=await client.query('SELECT id FROM round_reset_epochs ORDER BY id DESC LIMIT 1');
   const oldId=String(epoch.rows[0]?.id||'');if(!oldId)throw new Error('round_epoch_missing');
   const active=await client.query("SELECT id,status FROM rounds WHERE epoch_id=$1 AND status IN ('OPEN','CLOSED') LIMIT 1",[oldId]);
   if(active.rows[0])throw new Error('round_in_progress');

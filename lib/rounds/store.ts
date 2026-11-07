@@ -30,7 +30,7 @@ async function assertConnectedOaInTransaction(client:PoolClient){
  const result=await client.query('SELECT enabled,expires_at>now() AS active,verified_token_hash FROM oa_service_control WHERE line_oa_id=$1 FOR SHARE',[id]);
  if(result.rowCount!==1||!result.rows[0].enabled||!result.rows[0].active||result.rows[0].verified_token_hash!==hash)throw new RoundError('oa_service_inactive',403);
 }
-async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');await client.query('SELECT id FROM round_reset_epochs ORDER BY id DESC LIMIT 1 FOR SHARE');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
+async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock_shared(74021602)');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
 async function dbNow(client:PoolClient){const result=await client.query('SELECT clock_timestamp() AS now');return new Date(result.rows[0].now).toISOString()}
 async function transition(client:PoolClient){
  const now=await dbNow(client);

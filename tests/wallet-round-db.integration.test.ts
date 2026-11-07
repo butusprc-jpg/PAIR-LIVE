@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
-import {join} from 'node:path';
+import {randomUUID,createHash} from 'node:crypto';
 import {Pool} from 'pg';
+import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
 const testUrl=process.env.WALLET_TEST_DATABASE_URL;
 test('PostgreSQL wallet and round entry commit/rollback, replay and concurrency', {skip:!testUrl},async()=>{
  const schema=`wallet_test_${randomUUID().replaceAll('-','')}`;
- const admin=new Pool({connectionString:testUrl});const originalUrl=process.env.DATABASE_URL,originalGate=process.env.PAIR_WALLET_CUTOVER_VERIFIED;
+ const admin=new Pool({connectionString:assertTestTarget(testUrl)});const originalUrl=process.env.DATABASE_URL,originalGate=process.env.PAIR_WALLET_CUTOVER_VERIFIED,originalOa=process.env.CONNECTED_LINE_OA_ID,originalToken=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
  let appPool:Pool|undefined;
  try{
   await admin.query(`CREATE SCHEMA ${schema}`);const url=new URL(testUrl!);url.searchParams.set('options',`-csearch_path=${schema}`);process.env.DATABASE_URL=url.toString();process.env.PAIR_WALLET_CUTOVER_VERIFIED='true';appPool=new Pool({connectionString:url.toString()});
-  for(const path of ['migrations/001_members.sql','migrations/002_round_engine.sql','migrations/003_ocr_evidence.sql','migrations/004_evidence_audit.sql','modules/member-wallet/migrations/001_member_wallet.sql','migrations/005_wallet_round_integration.sql','migrations/006_wallet_cutover_state.sql'])await appPool.query(await readFile(join(process.cwd(),path),'utf8'));
+  for(const migration of await migrationManifest())await appPool.query(migration.sql);
+  const oa='@wallet_'+randomUUID().slice(0,8),token='wallet-isolated-token';process.env.CONNECTED_LINE_OA_ID=oa;process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=token;
+  await appPool.query("INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES($1,'Wallet fixture',true,now()+interval '1 day',$2)",[oa,createHash('sha256').update(token).digest('hex')]);
   const created=await appPool.query("INSERT INTO members(display_name,demo_points) VALUES('wallet-test',100) RETURNING id");const member=created.rows[0].id as string;
   await appPool.query("SELECT set_config('pair_live.member_id',$1,false)",[member]);
   await appPool.query('INSERT INTO member_wallets(member_id,available_points) VALUES($1,100)',[member]);
@@ -38,5 +39,5 @@ test('PostgreSQL wallet and round entry commit/rollback, replay and concurrency'
   const ledger=await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_USE'",[member]);assert.equal(ledger.rows[0].n,2);
   const entries=await appPool.query('SELECT count(*)::int AS n FROM round_entries WHERE member_id=$1',[member]);assert.equal(entries.rows[0].n,2);
   await database().end();
- }finally{if(originalUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=originalUrl;if(originalGate===undefined)delete process.env.PAIR_WALLET_CUTOVER_VERIFIED;else process.env.PAIR_WALLET_CUTOVER_VERIFIED=originalGate;await appPool?.end().catch(()=>{});await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});await admin.end()}
+ }finally{if(originalUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=originalUrl;if(originalGate===undefined)delete process.env.PAIR_WALLET_CUTOVER_VERIFIED;else process.env.PAIR_WALLET_CUTOVER_VERIFIED=originalGate;if(originalOa===undefined)delete process.env.CONNECTED_LINE_OA_ID;else process.env.CONNECTED_LINE_OA_ID=originalOa;if(originalToken===undefined)delete process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;else process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=originalToken;await appPool?.end().catch(()=>{});await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});await admin.end()}
 });

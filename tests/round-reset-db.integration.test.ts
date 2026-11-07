@@ -10,13 +10,14 @@ import {createPostgresNotificationStore,createPostgresReportReader,createReportS
 import {dispatchClosingBroadcast} from '../lib/line/round-broadcast';
 import {dispatchCountdownLine} from '../lib/line/countdown-notify';
 
-test('epoch reset archives pending rounds without changing points, ledger or broadcast history',{skip:!process.env.DATABASE_URL||process.env.PAIR_RESET_TEST_ISOLATED!=='1'},async()=>{
+test('concurrent epoch resets archive pending rounds once without changing points, ledger or broadcast history',{skip:!process.env.DATABASE_URL||process.env.PAIR_RESET_TEST_ISOLATED!=='1'},async()=>{
  assertTestTarget(process.env.DATABASE_URL);const db=database();
  const oa='@v9_'+randomUUID().slice(0,8),token='v9-isolated-token';
  process.env.CONNECTED_LINE_OA_ID=oa;
  process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=token;
  const oaId=(await db.query("INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES($1,'V9 test',true,now()+interval '1 day',$2) RETURNING id",[oa,createHash('sha256').update(token).digest('hex')])).rows[0].id;
  const admin=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name,role) VALUES('line','v9-test',$1,'V9 admin','admin') RETURNING id",[randomUUID()])).rows[0].id as string;
+ const secondAdmin=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name,role) VALUES('line','v9-test',$1,'V9 second admin','admin') RETURNING id",[randomUUID()])).rows[0].id as string;
  const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('V9 member',200) RETURNING id")).rows[0].id as string;
  const wallet=(await db.query('INSERT INTO member_wallets(member_id,available_points) VALUES($1,200) RETURNING id',[member])).rows[0].id as string;
  await db.query("INSERT INTO member_wallet_ledger(member_id,wallet_id,type,points,balance_before,balance_after,reference_id,idempotency_key,audit_actor,audit_source) VALUES($1,$2,'DEMO_GRANT',200,0,200,'v9-fixture',$3,'v9-test','internal')",[member,wallet,randomUUID()]);
@@ -37,7 +38,10 @@ test('epoch reset archives pending rounds without changing points, ledger or bro
  await db.query("UPDATE rounds SET status='SCANNING' WHERE id=$1",[oldId]);
  assert.equal((await db.query('SELECT status FROM rounds WHERE id=$1',[oldId])).rows[0].status,'SCANNING');
  const preview=await previewRoundReset();assert.equal(preview.rounds,1);assert.equal(preview.entries,1);assert.equal(preview.pendingEntries,1);
- const result=await resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่');assert.equal(result.replayed,false);assert.equal(result.rounds,1);assert.equal(result.entries,1);
+ const concurrent=await Promise.allSettled([resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่'),resetRoundEpoch(secondAdmin,key,'ยืนยันเริ่มใหม่')]);
+ const accepted=concurrent.filter((outcome):outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof resetRoundEpoch>>>=>outcome.status==='fulfilled');
+ assert.ok(accepted.length>=1);assert.ok(concurrent.every(outcome=>outcome.status==='fulfilled'||outcome.reason instanceof Error&&outcome.reason.message==='round_worker_busy'));
+ const result=accepted.find(outcome=>!outcome.value.replayed)?.value;assert.ok(result);assert.equal(result.rounds,1);assert.equal(result.entries,1);
  assert.equal((await resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่')).replayed,true);
  assert.equal((await resetRoundEpoch(admin,randomUUID(),'ยืนยันเริ่มใหม่')).epochId,result.epochId);
  assert.equal((await db.query('SELECT count(*)::int AS n FROM round_reset_epochs')).rows[0].n,2);
