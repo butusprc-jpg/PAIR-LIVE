@@ -1,0 +1,15 @@
+'use client';
+import {useRef,useState} from 'react';
+type Preview={epochId:string;rounds:number;entries:number;pendingEntries:number;ocrEvidence:number};
+const phrase='ยืนยันเริ่มใหม่';
+export default function AdminRoundReset(){
+ const[preview,setPreview]=useState<Preview|null>(null),[confirm,setConfirm]=useState(''),[open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const key=useRef<string|null>(null);
+ async function begin(){setBusy(true);setError('');try{const response=await fetch('/api/admin/round/reset',{cache:'no-store'});const body=await response.json();if(!response.ok)throw new Error(body.error||'โหลดจำนวนข้อมูลไม่สำเร็จ');setPreview(body);key.current=crypto.randomUUID();setConfirm('');setOpen(true)}catch(e){setError(e instanceof Error?e.message:'โหลดจำนวนข้อมูลไม่สำเร็จ')}finally{setBusy(false)}}
+ async function apply(){if(confirm!==phrase||!key.current)return;setBusy(true);setError('');try{
+  const challengeResponse=await fetch('/api/admin/auth/challenge',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose:'mutation'})});const challenge=await challengeResponse.json();if(!challengeResponse.ok||!challenge.ok)throw new Error('ยืนยันสิทธิ์ไม่สำเร็จ');
+  const response=await fetch('/api/admin/round/reset',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Admin-CSRF':challenge.csrfToken},body:JSON.stringify({resetKey:key.current,confirmation:confirm})});const body=await response.json();if(!response.ok)throw new Error(body.error||'เริ่มชุดข้อมูลใหม่ไม่สำเร็จ');setOpen(false);window.location.reload();
+ }catch(e){setError(e instanceof Error?e.message:'เริ่มชุดข้อมูลใหม่ไม่สำเร็จ')}finally{setBusy(false)}}
+ return <section className="card admin-round-reset"><h2>จัดการข้อมูลรอบและรายงาน</h2><p className="muted">เริ่มนับรอบและสถิติใหม่ โดยเก็บกระเป๋าแต้ม สมาชิก และประวัติธุรกรรมเดิมไว้ทั้งหมด</p><button type="button" className="reset-danger" disabled={busy} onClick={()=>void begin()}>ล้างรอบและรายงาน — เริ่มใหม่</button>{error&&!open&&<p role="alert" className="urgent-note">{error}</p>}
+ {open&&preview&&<div className="modalback" role="presentation"><div className="modal" role="dialog" aria-modal="true" aria-label="ยืนยันเริ่มชุดข้อมูลใหม่"><h2>ยืนยันการเริ่มชุดข้อมูลใหม่</h2><p>ชุดปัจจุบันมี {preview.rounds} รอบ · {preview.entries} รายการทาย · {preview.pendingEntries} รายการรอผล · {preview.ocrEvidence} หลักฐาน OCR</p><p className="muted">ข้อมูลรอบเก่าจะไม่ปรากฏในรายงานปกติ รายงานและสถิติเริ่มต้นใหม่ ยอดแต้มสมาชิกไม่เปลี่ยน และไม่สามารถยกเลิกจากหน้าปกติได้</p><label>พิมพ์ {phrase}<input className="field" value={confirm} onChange={e=>setConfirm(e.target.value)} autoComplete="off"/></label>{error&&<p role="alert" className="urgent-note">{error}</p>}<div className="modal-buttons"><button type="button" className="secondary" disabled={busy} onClick={()=>setOpen(false)}>ยกเลิก</button><button type="button" className="reset-danger" disabled={busy||confirm!==phrase} onClick={()=>void apply()}>ยืนยันเริ่มใหม่</button></div></div></div>}</section>;
+}

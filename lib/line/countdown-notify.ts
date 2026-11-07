@@ -13,7 +13,7 @@ export async function dispatchCountdownLine(pool:Pool=database(),fetcher:typeof 
  try{await claimant.query('BEGIN');const result=await claimant.query<Job>(`SELECT o.round_id,o.member_id,o.recipient_user_id,o.retry_key,o.attempts,
  extract(epoch FROM (r.countdown_ends_at-r.countdown_started_at))::int AS duration_seconds
  FROM round_countdown_line_outbox o JOIN rounds r ON r.id=o.round_id
- WHERE o.status IN ('PENDING','FAILED','SENDING') AND o.attempts<5 AND o.next_attempt_at<=clock_timestamp()
+ WHERE r.epoch_id=current_round_epoch_id() AND o.status IN ('PENDING','FAILED','SENDING') AND o.attempts<5 AND o.next_attempt_at<=clock_timestamp()
  AND (o.lease_until IS NULL OR o.lease_until<clock_timestamp())
  ORDER BY o.next_attempt_at,o.round_id,o.member_id LIMIT 1 FOR UPDATE OF o SKIP LOCKED`);
  job=result.rows[0];if(!job){await claimant.query('COMMIT');return null}
@@ -24,7 +24,7 @@ export async function dispatchCountdownLine(pool:Pool=database(),fetcher:typeof 
  await delivery.query('SELECT pg_advisory_xact_lock(748201,22)');
  const state=(await delivery.query<State>(`SELECT r.status AS round_status,a.line_oa_id,a.enabled,a.paused,a.expires_at,a.verified_token_hash,a.deleted_at,r.countdown_ends_at,r.countdown_stopped_at
  FROM round_countdown_line_outbox o JOIN rounds r ON r.id=o.round_id JOIN oa_service_control a ON a.id=o.oa_id
- WHERE o.round_id=$1 AND o.member_id=$2 FOR SHARE OF a,r`,[job.round_id,job.member_id])).rows[0];
+ WHERE o.round_id=$1 AND o.member_id=$2 AND r.epoch_id=current_round_epoch_id() FOR SHARE OF a,r`,[job.round_id,job.member_id])).rows[0];
  const token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN,hash=token?createHash('sha256').update(token).digest('hex'):null;
  const running=!!state&&state.round_status==='OPEN'&&!state.countdown_stopped_at&&new Date(state.countdown_ends_at)>new Date();
  const ready=running&&!!token&&providerPairConfigured()&&state.line_oa_id===process.env.CONNECTED_LINE_OA_ID&&state.enabled&&!state.paused&&!state.deleted_at&&new Date(state.expires_at)>new Date()&&state.verified_token_hash===hash;

@@ -30,11 +30,11 @@ async function assertConnectedOaInTransaction(client:PoolClient){
  const result=await client.query('SELECT enabled,expires_at>now() AS active,verified_token_hash FROM oa_service_control WHERE line_oa_id=$1 FOR SHARE',[id]);
  if(result.rowCount!==1||!result.rows[0].enabled||!result.rows[0].active||result.rows[0].verified_token_hash!==hash)throw new RoundError('oa_service_inactive',403);
 }
-async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
+async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');await client.query('SELECT id FROM round_reset_epochs ORDER BY id DESC LIMIT 1 FOR SHARE');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
 async function dbNow(client:PoolClient){const result=await client.query('SELECT clock_timestamp() AS now');return new Date(result.rows[0].now).toISOString()}
 async function transition(client:PoolClient){
  const now=await dbNow(client);
- const found=await client.query("SELECT * FROM rounds WHERE status IN ('OPEN','CLOSED','SCANNING','REVIEW_REQUIRED') ORDER BY id DESC LIMIT 1 FOR UPDATE");
+ const found=await client.query("SELECT * FROM rounds WHERE epoch_id=current_round_epoch_id() AND status IN ('OPEN','CLOSED','SCANNING','REVIEW_REQUIRED') ORDER BY id DESC LIMIT 1 FOR UPDATE");
  if(!found.rows[0])return {round:null as Round|null,serverTime:now};
  let row=found.rows[0];
  if(row.status==='OPEN'&&(new Date(now)>=new Date(row.closes_at)||row.countdown_ends_at&&!row.countdown_stopped_at&&new Date(now)>=new Date(row.countdown_ends_at))){
@@ -72,7 +72,7 @@ export async function tickRoundEngine(options:{requireLiveForAuto?:boolean;allow
   if(options.allowAutoStart===false)return current;
   if(options.requireLiveForAuto){const live=await client.query("SELECT status FROM external_live_settings WHERE id=1");if(live.rows[0]?.status!=='LIVE')return current;}
   if(await readRoundMode(client)==='manual')return current;
-  if(options.requireLiveForAuto){const prior=await client.query("SELECT a.details->>'source' AS source FROM rounds r JOIN round_audit_logs a ON a.round_id=r.id AND a.action='ROUND_OPENED' ORDER BY r.id DESC,a.id DESC LIMIT 1");if(!['livekit','livekit_auto','external_live','external_live_auto'].includes(prior.rows[0]?.source))return current}
+  if(options.requireLiveForAuto){const prior=await client.query("SELECT a.details->>'source' AS source FROM rounds r JOIN round_audit_logs a ON a.round_id=r.id AND a.action='ROUND_OPENED' WHERE r.epoch_id=current_round_epoch_id() ORDER BY r.id DESC,a.id DESC LIMIT 1");if(prior.rows[0]&&!['livekit','livekit_auto','external_live','external_live_auto'].includes(prior.rows[0]?.source))return current}
   await assertConnectedOaInTransaction(client);
   const business=await readBusinessSettings(client);
   if(shopStatusAt(business.shopHours,current.serverTime)==='CLOSED')return current;
@@ -114,7 +114,7 @@ export async function startRoundForLive(actorId:string,idempotencyKey:string){
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   await assertConnectedOaInTransaction(client);
   const replay=await client.query("SELECT r.* FROM round_audit_logs a JOIN rounds r ON r.id=a.round_id WHERE a.action='ROUND_OPENED' AND a.details->>'live_start_key'=$1 ORDER BY a.id DESC LIMIT 1",[idempotencyKey]);
-  if(replay.rows[0]){if(['SETTLED','CANCELLED'].includes(replay.rows[0].status))throw new RoundError('live_start_key_finished',409);return {round:await mapRoundWithRules(client,replay.rows[0]),serverTime:await dbNow(client),replayed:true}}
+  if(replay.rows[0]){if(Number(replay.rows[0].epoch_id)!==Number((await client.query('SELECT current_round_epoch_id() AS id')).rows[0].id))throw new RoundError('live_start_key_archived',409);if(['SETTLED','CANCELLED'].includes(replay.rows[0].status))throw new RoundError('live_start_key_finished',409);return {round:await mapRoundWithRules(client,replay.rows[0]),serverTime:await dbNow(client),replayed:true}}
   const current=await transition(client);
   if(current.round){const source=await client.query("SELECT details->>'source' AS source FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_OPENED' ORDER BY id DESC LIMIT 1",[current.round.id]);if(['livekit','livekit_auto','external_live','external_live_auto'].includes(source.rows[0]?.source))return {...current,replayed:true};throw new RoundError('round_already_active',409)}
   const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
@@ -146,7 +146,7 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);
  // Lock the round before checking database time; the worker takes the same lock when closing it.
  await assertConnectedOaInTransaction(client);
- const found=await client.query('SELECT * FROM rounds WHERE id=$1 FOR UPDATE',[roundId]);
+ const found=await client.query('SELECT * FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id() FOR UPDATE',[roundId]);
  if(!found.rows[0])throw new RoundError('round_not_found',404);
  const round=found.rows[0];
  const prior=await client.query('SELECT * FROM round_entries WHERE member_id=$1 AND idempotency_key=$2',[memberId,input.idempotencyKey]);
@@ -167,13 +167,13 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'member','DEMO_ENTRY_ACCEPTED',jsonb_build_object('entry_id',$2::text))",[roundId,inserted.rows[0].id]);
  return {id:inserted.rows[0].id,roundId,status:'PENDING',replayed:false,walletBalance};
  })}
-export async function roundTotals(roundId:string){const result=await database().query('SELECT even_people,even_points,odd_people,odd_points FROM rounds WHERE id=$1',[roundId]);const row=result.rows[0];return {even:{people:Number(row?.even_people||0),points:Number(row?.even_points||0)},odd:{people:Number(row?.odd_people||0),points:Number(row?.odd_points||0)}}}
-export async function myRoundEntries(memberId:string){return inTransaction(async client=>{await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);const result=await client.query('SELECT id,round_id,side,demo_points,status,created_at FROM round_entries WHERE member_id=$1 ORDER BY created_at DESC LIMIT 100',[memberId]);return result.rows})}
+export async function roundTotals(roundId:string){const result=await database().query('SELECT even_people,even_points,odd_people,odd_points FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id()',[roundId]);const row=result.rows[0];return {even:{people:Number(row?.even_people||0),points:Number(row?.even_points||0)},odd:{people:Number(row?.odd_people||0),points:Number(row?.odd_points||0)}}}
+export async function myRoundEntries(memberId:string){return inTransaction(async client=>{await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);const result=await client.query('SELECT e.id,e.round_id,e.side,e.demo_points,e.status,e.created_at FROM round_entries e JOIN rounds r ON r.id=e.round_id WHERE e.member_id=$1 AND r.epoch_id=current_round_epoch_id() ORDER BY e.created_at DESC LIMIT 100',[memberId]);return result.rows})}
 /** Internal-only refund path. Call after an authorized cancellation; no browser route exposes it. */
 export async function refundCancelledDemoEntry(memberId:string,entryId:string){return inTransaction(async client=>{
  await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);
  if(process.env.PAIR_WALLET_CUTOVER_VERIFIED!=='true')throw new RoundError('wallet_cutover_not_verified',503);
- const identity=await client.query('SELECT round_id FROM round_entries WHERE id=$1 AND member_id=$2',[entryId,memberId]);if(!identity.rows[0])throw new RoundError('entry_not_found',404);
+ const identity=await client.query('SELECT e.round_id FROM round_entries e JOIN rounds r ON r.id=e.round_id WHERE e.id=$1 AND e.member_id=$2 AND r.epoch_id=current_round_epoch_id()',[entryId,memberId]);if(!identity.rows[0])throw new RoundError('entry_not_found',404);
  const round=await client.query('SELECT id,status FROM rounds WHERE id=$1 FOR UPDATE',[identity.rows[0].round_id]);
  const found=await client.query('SELECT * FROM round_entries WHERE id=$1 AND member_id=$2 FOR UPDATE',[entryId,memberId]);const entry=found.rows[0];if(!entry)throw new RoundError('entry_not_found',404);
  if(round.rows[0]?.status!=='CANCELLED'&&entry.status!=='CANCELLED')throw new RoundError('entry_not_cancelled',409);

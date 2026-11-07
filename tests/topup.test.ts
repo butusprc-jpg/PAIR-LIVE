@@ -36,7 +36,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
  const pool=new Pool({connectionString:assertTestTarget(raw),max:12});const schema='topup_test_'+randomUUID().replaceAll('-','');let db:Pool|undefined;
  try{await pool.query(`CREATE SCHEMA ${schema}`);const url=new URL(raw!);url.searchParams.set('options',`-csearch_path=${schema}`);db=new Pool({connectionString:url.toString(),max:12});for(const m of await migrationManifest())await db.query(m.sql);
  const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Synthetic topup member',100) RETURNING id")).rows[0].id;
- const other=(await db.query("INSERT INTO members(display_name) VALUES('Synthetic other') RETURNING id")).rows[0].id;
+ const other=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Synthetic other',1250) RETURNING id")).rows[0].id;
  const admins=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name) VALUES('line','test','test-a','Admin A'),('line','test','test-b','Admin B') RETURNING id")).rows;
  const slipKey=randomUUID(),slipSha='a'.repeat(64);
  const slip={objectKey:'topup-slips/'+member+'/'+slipKey,type:'image/jpeg',sha:slipSha};

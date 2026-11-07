@@ -21,7 +21,7 @@ test('business settings are persisted, next-round only, and cap concurrent entri
  try{
   await db.query('TRUNCATE round_audit_logs,rounds CASCADE');
   await db.query('UPDATE round_settings SET duration_minutes=5 WHERE id=1');
-  const members=(await db.query("INSERT INTO members(display_name) VALUES('Business fixture A'),('Business fixture B') RETURNING id")).rows.map(row=>row.id as string);
+  const members=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Business fixture A',1250),('Business fixture B',1250) RETURNING id")).rows.map(row=>row.id as string);
   const start=await businessSettingsOverview();
   assert.deepEqual(start.settings,{sideDifferenceLimit:null,maxRoundPoints:null,minRoundPoints:null,adminFeeRate:null,shopHours:null});
   const first=(await tickRoundEngine()).round!;

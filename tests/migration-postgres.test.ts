@@ -10,6 +10,7 @@ test('PostgreSQL migration schema, wallet gates, evidence immutability and rollb
  const rls=await db.query("SELECT tablename,rowsecurity, c.relforcerowsecurity AS forcerowsecurity FROM pg_tables t JOIN pg_class c ON c.relname=t.tablename WHERE schemaname='public' AND tablename IN ('member_history','round_entries','member_wallets','member_wallet_ledger')");assert.equal(rls.rowCount,4);assert.ok(rls.rows.every(x=>x.rowsecurity&&x.forcerowsecurity));
  const wallet=await db.query('SELECT phase,enabled,ever_cutover FROM member_wallet_runtime_state WHERE id=1');assert.deepEqual(wallet.rows[0],{phase:'LEGACY',enabled:false,ever_cutover:false});const notify=await db.query('SELECT enabled FROM report_notification_settings WHERE id=1');assert.equal(notify.rows[0].enabled,false);
  await db.query('BEGIN');try{
+  const newMember=await db.query("INSERT INTO members(display_name) VALUES('No opening points') RETURNING demo_points");assert.equal(newMember.rows[0].demo_points,0);
   const member=await db.query("INSERT INTO members(display_name,demo_points) VALUES('Test',1250) RETURNING id");const id=member.rows[0].id;
   await db.query("INSERT INTO member_identities(member_id,provider,provider_channel_id,provider_user_id) VALUES($1,'line','test-channel','test-user')",[id]);
   await db.query('SAVEPOINT duplicate_identity');await assert.rejects(db.query("INSERT INTO member_identities(member_id,provider,provider_channel_id,provider_user_id) VALUES($1,'line','test-channel','test-user')",[id]),/duplicate key/);await db.query('ROLLBACK TO SAVEPOINT duplicate_identity');

@@ -30,7 +30,7 @@ export async function readFinancialReport(pool:Pool){return readOnly(pool,async 
  return {items:mapped,totals:{topup:mapped.filter(row=>row.type==='TOPUP').reduce((sum,row)=>sum+row.points,0),withdrawal:mapped.filter(row=>row.type==='WITHDRAWAL').reduce((sum,row)=>sum+row.points,0)},approvals:history};
  },true)}
 export async function readRoundParticipationReport(pool:Pool){return readOnly(pool,async client=>{
- const rounds=await client.query(`WITH latest AS (SELECT id,opens_at,status FROM rounds ORDER BY opens_at DESC,id DESC LIMIT 50)
+ const rounds=await client.query(`WITH latest AS (SELECT id,opens_at,status FROM rounds WHERE epoch_id=current_round_epoch_id() ORDER BY opens_at DESC,id DESC LIMIT 50)
  SELECT r.id,r.opens_at,r.status,COUNT(DISTINCT e.member_id)::int AS participants,
  COALESCE(SUM(e.demo_points) FILTER (WHERE e.side='even'),0)::bigint AS even_points,
  COALESCE(SUM(e.demo_points) FILTER (WHERE e.side='odd'),0)::bigint AS odd_points

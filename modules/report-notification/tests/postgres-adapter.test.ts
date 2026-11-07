@@ -34,7 +34,7 @@ test('outbox register and enqueue use independent conflict-safe keys',async()=>{
 test('multiworker claim uses one atomic SKIP LOCKED statement and reclaims leases',async()=>{
  let sql='';const pool={query:async(statement:string)=>{sql=statement;return {rows:[]}},connect:async()=>{throw Error('unused')}} as unknown as Pool;
  const result=await createPostgresNotificationStore(pool).claim('2026-11-03T00:00:00Z','worker-1',30000,10);
- assert.deepEqual(result,[]);assert.match(sql,/FOR UPDATE SKIP LOCKED/);assert.match(sql,/lease_until<=/);assert.match(sql,/UPDATE report_notification_outbox/);
+ assert.deepEqual(result,[]);assert.match(sql,/FOR UPDATE OF o SKIP LOCKED/);assert.match(sql,/lease_until<=/);assert.match(sql,/UPDATE report_notification_outbox/);
 });
 test('completion uses lease-owner compare-and-set and records provider acceptance separately',async()=>{
  const calls:string[]=[];
