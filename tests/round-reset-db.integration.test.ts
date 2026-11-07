@@ -67,7 +67,8 @@ test('concurrent epoch resets archive pending rounds once without changing point
  await assert.rejects(resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่',resetDb),/round_in_progress/);
  await db.query("UPDATE rounds SET status='SCANNING' WHERE id=$1",[oldId]);
  assert.equal((await db.query('SELECT status FROM rounds WHERE id=$1',[oldId])).rows[0].status,'SCANNING');
- const preview=await previewRoundReset();assert.equal(preview.rounds,1);assert.equal(preview.entries,2);assert.equal(preview.pendingEntries,2);
+ await db.query("INSERT INTO round_ocr_evidence(round_id,frame_id,source_type,captured_at,raw_ocr_text,normalized_text,confidence,original_sha256,crop_sha256,original_object_key,crop_object_key) VALUES($1,$2,'MOBILE_CAMERA',now(),'136.20','136.20',99,repeat('a',64),repeat('b',64),'test-original','test-crop')",[oldId,randomUUID()]);
+ const preview=await previewRoundReset();assert.equal(preview.rounds,1);assert.equal(preview.entries,2);assert.equal(preview.pendingEntries,2);assert.equal(preview.ocrEvidence,1);
  const concurrent=await Promise.allSettled([resetRoundEpoch(admin,key,'ยืนยันเริ่มใหม่'),resetRoundEpoch(secondAdmin,key,'ยืนยันเริ่มใหม่',resetDb)]);
  const accepted=concurrent.filter((outcome):outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof resetRoundEpoch>>>=>outcome.status==='fulfilled');
  assert.ok(accepted.length>=1);assert.ok(concurrent.every(outcome=>outcome.status==='fulfilled'||outcome.reason instanceof Error&&outcome.reason.message==='round_worker_busy'));
@@ -86,6 +87,7 @@ test('concurrent epoch resets archive pending rounds once without changing point
  assert.deepEqual(await createPostgresNotificationStore(db).claim(new Date().toISOString(),'v9-worker',5000,10),[]);
  assert.deepEqual((await db.query('SELECT m.demo_points,w.available_points,(SELECT count(*)::int FROM member_wallet_ledger WHERE member_id=m.id) AS ledger,(SELECT count(*)::int FROM member_topup_requests WHERE member_id=m.id) AS topups,(SELECT count(*)::int FROM member_withdrawal_requests WHERE member_id=m.id) AS withdrawals FROM members m JOIN member_wallets w ON w.member_id=m.id WHERE m.id=$1',[member])).rows,before.rows);
  assert.equal((await db.query('SELECT count(*)::int AS n FROM round_entries WHERE round_id=$1 AND status=$2',[oldId,'PENDING'])).rows[0].n,2);
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM round_ocr_evidence WHERE round_id=$1',[oldId])).rows[0].n,1);
  assert.equal((await db.query('SELECT status FROM round_line_broadcast_outbox WHERE round_id=$1',[oldId])).rows[0].status,'PENDING');
  await assert.rejects(db.query("UPDATE round_entries SET status='CANCELLED' WHERE round_id=$1",[oldId]),/archived_round_entry_is_immutable/);
  await assert.rejects(db.query("INSERT INTO round_entries(round_id,member_id,side,demo_points,idempotency_key) VALUES($1,$2,'odd',5,$3)",[oldId,member,randomUUID()]),/archived_round_entry_is_immutable/);
