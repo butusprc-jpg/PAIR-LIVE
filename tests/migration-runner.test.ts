@@ -14,7 +14,7 @@ test('V13 extension accepts V12 028–030 arriving later only',()=>{
 });
 test('main migration filenames and numbers cannot collide across branches',()=>{
  assert.doesNotThrow(()=>assertUniqueMigrationNumbers([...migrationPaths]));
- assert.throws(()=>assertUniqueMigrationNumbers([...migrationPaths,'migrations/030_external_live_schema_binding.sql','migrations/030_owner_usage_metrics.sql']),/duplicate_migration_number/);
+ assert.throws(()=>assertUniqueMigrationNumbers([...migrationPaths,'migrations/030_owner_usage_metrics.sql']),/duplicate_migration_number/);
  assert.throws(()=>assertUniqueMigrationNumbers([...migrationPaths,migrationPaths.at(-1)!]),/duplicate_migration_filename/);
 });
 test('a persistent legacy V13 030 history stops before schema changes',()=>{
