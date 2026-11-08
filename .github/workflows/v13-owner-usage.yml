@@ -37,5 +37,7 @@ jobs:
       - run: node --import tsx scripts/migrate.ts --apply
       - run: node --import tsx scripts/migrate.ts --validate
       - run: npm test
+      - run: git fetch --no-tags --depth=1 origin cb94edf23a86d59baa6e1a9ac8aca8d15795eb7f
+      - run: node --import tsx scripts/test-v12-v13-migrations.ts
       - run: npx tsc --noEmit
       - run: npm run build
