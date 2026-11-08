@@ -1,4 +1,5 @@
 'use client';
-import {useLiveState} from './useLiveState';
-export default function MemberLivePlayer(){const {state,error,seconds}=useLiveState('/api/live');const showing=state?.status==='SHOWING'&&seconds>0&&state.embedUrl;
- return <div className="external-live-frame" aria-label="จอถ่ายทอดสด">{showing?<iframe key={state.embedUrl!} src={state.embedUrl!} title="PAIR LIVE" allow="fullscreen; picture-in-picture" allowFullScreen referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-presentation"/>:<div className="external-live-empty" role="status">{error?'ไม่สามารถโหลดสถานะ LIVE ได้':state?.status==='INTERMISSION'?`พัก ${seconds} วินาที`:state?'ยังไม่มี LIVE':'กำลังโหลด LIVE...'}</div>}</div>}
+import {useEffect,useState} from 'react';
+import VdoViewer from './VdoViewer';
+type State={displayEnabled:boolean;viewerUrl:string|null;revision:number};
+export default function MemberLivePlayer(){const [state,setState]=useState<State|null>(null),[error,setError]=useState(false);useEffect(()=>{let active=true;const load=async()=>{try{const response=await fetch('/api/live',{credentials:'same-origin',cache:'no-store'});if(!response.ok)throw Error('live_unavailable');const next=await response.json() as State;if(active){setState(next);setError(false)}}catch{if(active){setState(null);setError(true)}}};void load();const timer=setInterval(()=>void load(),4000);return()=>{active=false;clearInterval(timer)}},[]);return state?.displayEnabled&&state.viewerUrl?<VdoViewer url={state.viewerUrl} label="PAIR LIVE VDO.Ninja"/>:<div className="external-live-frame" aria-label="จอถ่ายทอดสด"><div className="external-live-empty" role="status">{error?'ไม่สามารถโหลดสถานะ LIVE ได้':state?'ยังไม่มี LIVE':'กำลังโหลด LIVE...'}</div></div>}

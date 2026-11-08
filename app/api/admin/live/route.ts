@@ -1,16 +1,8 @@
 import {adminAccess,adminDenied} from '../../../../lib/server/admin-auth';
 import {database} from '../../../../lib/server/db';
-import {adminLive,adminChangeLive} from '../../../../modules/external-live/server/service';
+import {adminVdoLive,changeVdoLive} from '../../../../modules/external-live/server/vdo-ninja';
 import {LiveError} from '../../../../modules/external-live/types';
 export const runtime='nodejs';
-async function adminChannel(id:string){const row=await database().query("SELECT provider_channel_id FROM admin_identities WHERE id=$1 AND provider='line' AND status='active'",[id]);return row.rows[0]?.provider_channel_id as string|undefined}
-export async function GET(request:Request){try{const access=await adminAccess(request,['admin','operator','viewer']);if(!access.ok)return adminDenied(access.error);return Response.json(await adminLive(database(),await adminChannel(access.value.admin.id)),{headers:{'Cache-Control':'private, no-store'}})}catch(error){return failure(error)}}
-export async function POST(request:Request){try{
- const access=await adminAccess(request,['admin','operator'],true);if(!access.ok)return adminDenied(access.error);
- if(Number(request.headers.get('content-length'))>1024)return Response.json({error:'body_too_large'},{status:413});
- const raw=await request.text();if(raw.length>1024)return Response.json({error:'body_too_large'},{status:413});
- let body:Record<string,unknown>;try{body=JSON.parse(raw)}catch{return Response.json({error:'invalid_json'},{status:400})}
- if(!body||!['save','settings','start','stop'].includes(String(body.action)))return Response.json({error:'invalid_action'},{status:400});
- return Response.json(await adminChangeLive(database(),await adminChannel(access.value.admin.id),access.value.admin.id,body as Parameters<typeof adminChangeLive>[3]),{headers:{'Cache-Control':'no-store'}});
- }catch(error){return failure(error)}}
+export async function GET(request:Request){try{const access=await adminAccess(request,['admin','operator','viewer']);if(!access.ok)return adminDenied(access.error);const state=await adminVdoLive(database());return Response.json(access.value.admin.role==='viewer'?{...state,publisherUrl:null}:state,{headers:{'Cache-Control':'private, no-store'}})}catch(error){return failure(error)}}
+export async function POST(request:Request){try{const access=await adminAccess(request,['admin','operator'],true);if(!access.ok)return adminDenied(access.error);if(Number(request.headers.get('content-length'))>1024)return Response.json({error:'body_too_large'},{status:413});const raw=await request.text();if(raw.length>1024)return Response.json({error:'body_too_large'},{status:413});let body:Record<string,unknown>;try{body=JSON.parse(raw)}catch{return Response.json({error:'invalid_json'},{status:400})}if(!body||!['start','stop'].includes(String(body.action)))return Response.json({error:'invalid_action'},{status:400});if(typeof body.revision!=='number')return Response.json({error:'invalid_revision'},{status:400});return Response.json(await changeVdoLive(database(),body.action as 'start'|'stop',Number(body.revision),access.value.admin.id),{headers:{'Cache-Control':'no-store'}})}catch(error){return failure(error)}}
 function failure(error:unknown){return Response.json({error:error instanceof LiveError?error.code:'live_unavailable'},{status:error instanceof LiveError?error.status:503,headers:{'Cache-Control':'no-store'}})}

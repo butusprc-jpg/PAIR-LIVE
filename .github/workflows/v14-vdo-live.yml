@@ -1,0 +1,38 @@
+name: V14 VDO LIVE
+on:
+  push:
+    branches: [feat/pair-live-v8-v11-integration]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      VDO_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y imagemagick tesseract-ocr
+      - run: npm ci
+      - run: npm run db:migrate -- --apply
+      - run: npm run db:migrate -- --validate
+      - run: npm test
+      - run: npx tsc --noEmit
+      - run: npm run build
