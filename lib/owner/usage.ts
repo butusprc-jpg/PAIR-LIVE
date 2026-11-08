@@ -18,7 +18,8 @@ export async function ownerUsage(db:Pool,now=new Date(),fetcher:typeof fetch=fet
  const settings=(await db.query(`SELECT oa_id,enabled,threshold_70,threshold_85,threshold_95,threshold_100 FROM owner_usage_alert_settings`)).rows;
  const api=(await db.query(`SELECT oa_id,sum(request_count)::bigint AS count FROM owner_usage_api_batches WHERE usage_date>=date_trunc('month',$1::date)::date AND usage_date<date_trunc('month',$1::date)::date+interval '1 month' GROUP BY oa_id`,[today])).rows;
  const usage=[];
- for(const row of oa){const token=connectedToken(row);const line=await fetchLineUsage(row.id,token,fetcher,now.getTime());
+ for(const row of oa){const token=connectedToken(row);const misconfigured=row.line_oa_id===process.env.CONNECTED_LINE_OA_ID&&!!process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN&&!token;
+  const line=misconfigured?{status:'ERROR' as const,used:null,quota:null,quotaType:null,fetchedAt:null,errorCode:'CREDENTIAL_MISMATCH'}:await fetchLineUsage(row.id,token,fetcher,now.getTime());
   if(token){await db.query(`INSERT INTO owner_usage_line_snapshots(oa_id,quota_type,quota,used,fetch_status,fetched_at,attempted_at,error_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(oa_id) DO UPDATE SET quota_type=excluded.quota_type,quota=excluded.quota,used=excluded.used,fetch_status=excluded.fetch_status,fetched_at=excluded.fetched_at,attempted_at=excluded.attempted_at,error_code=excluded.error_code WHERE owner_usage_line_snapshots.attempted_at<excluded.attempted_at`,[row.id,line.quotaType,line.quota,line.used,line.status,line.fetchedAt,now,line.errorCode||null]);
    if(line.status==='OK')await db.query(`UPDATE owner_usage_daily SET line_messages_used=$3,line_quota=$4,updated_at=now() WHERE oa_id=$1 AND usage_date=$2`,[row.id,today,line.used,line.quota]);
   }
