@@ -1,0 +1,3 @@
+import React from "react";
+import test from 'node:test';import assert from 'node:assert/strict';import {renderToStaticMarkup} from 'react-dom/server';import AdminLivePanel from '../client/AdminLivePanel';
+test('admin can type the LIVE title and URL even before tenant status loads',()=>{const html=renderToStaticMarkup(<AdminLivePanel role="admin"/>);assert.match(html,/ชื่อรายการ LIVE<input[^>]*class="field"/);assert.match(html,/ลิงก์ LINE SHOPPING LIVE<input[^>]*class="field"/);assert.doesNotMatch(html,/ชื่อรายการ LIVE<input[^>]*disabled/);assert.doesNotMatch(html,/ลิงก์ LINE SHOPPING LIVE<input[^>]*disabled/)});
