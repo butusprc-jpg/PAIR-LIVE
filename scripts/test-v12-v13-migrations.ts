@@ -13,6 +13,7 @@ const v12Paths=[
 ];
 const combined=[...migrationPaths.slice(0,-1),...v12Paths,migrationPaths.at(-1)!];
 assertUniqueMigrationNumbers(combined);
+async function main(){
 const pool=new Pool({connectionString:assertTestTarget(process.env.MIGRATION_TEST_DATABASE_URL),ssl:false,max:1});
 try{
  const client=await pool.connect();
@@ -37,3 +38,5 @@ try{
   console.log('PASS V13 031 then V12 028–030 on disposable PostgreSQL; distinct history and FORCE RLS retained');
  }finally{client.release()}
 }finally{await pool.end()}
+}
+void main().catch(error=>{console.error(error);process.exitCode=1});
