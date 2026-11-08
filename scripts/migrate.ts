@@ -1,6 +1,6 @@
 import {Pool} from 'pg';
 import {expectedTables} from '../lib/schema-tables';
-import {assertTestTarget,migrationManifest,assertMigrationOrder} from '../lib/migration-manifest';
+import {assertTestTarget,migrationManifest,assertMigrationOrder,assertNoLegacyV13History} from '../lib/migration-manifest';
 async function main(){
 const mode=process.argv[2];
 if(!['--dry-run','--validate','--apply'].includes(mode)){console.error('usage: npm run db:migrate -- --dry-run|--validate|--apply (isolated local test DB only)');process.exit(2)}
@@ -14,6 +14,7 @@ try{const client=await pool.connect();try{
   const tables=await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");if(tables.rows.some(row=>!expectedTables.has(row.tablename)))throw new Error('unexpected_public_table');
   const installed=new Map<string,string>();
   if(found.rows[0].name){const rows=await client.query('SELECT path,sha256 FROM schema_migration_history ORDER BY path');for(const row of rows.rows)installed.set(row.path,row.sha256)}
+  assertNoLegacyV13History(new Set(installed.keys()));
   const known=new Set<string>(manifest.map(m=>m.path));for(const path of installed.keys())if(!known.has(path))throw new Error('unknown_installed_migration');
   for(const item of manifest){const hash=installed.get(item.path);if(hash&&hash!==item.sha256)throw new Error(`migration_hash_mismatch: ${item.path}`)}
   assertMigrationOrder(manifest.map(m=>m.path),new Set(installed.keys()));
