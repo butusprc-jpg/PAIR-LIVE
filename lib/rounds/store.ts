@@ -70,7 +70,7 @@ export async function tickRoundEngine(options:{requireLiveForAuto?:boolean;allow
   const current=await transition(client);
   if(current.round){await enqueueClosingBroadcast(client,current.round,current.serverTime);return current}
   if(options.allowAutoStart===false)return current;
-  if(options.requireLiveForAuto){const live=await client.query("SELECT vdo_display_enabled FROM external_live_settings WHERE id=1");if(live.rows[0]?.vdo_display_enabled!==true)return current;}
+  if(options.requireLiveForAuto){const live=await client.query("SELECT l.display_enabled FROM line_shopping_live_tenants l JOIN oa_service_control o ON o.id=l.oa_id WHERE o.line_oa_id=$1",[process.env.CONNECTED_LINE_OA_ID||'']);if(live.rows[0]?.display_enabled!==true)return current;}
   if(await readRoundMode(client)==='manual')return current;
   if(options.requireLiveForAuto){const prior=await client.query("SELECT a.details->>'source' AS source FROM rounds r JOIN round_audit_logs a ON a.round_id=r.id AND a.action='ROUND_OPENED' WHERE r.epoch_id=current_round_epoch_id() ORDER BY r.id DESC,a.id DESC LIMIT 1");if(prior.rows[0]&&!['livekit','livekit_auto','external_live','external_live_auto'].includes(prior.rows[0]?.source))return current}
   await assertConnectedOaInTransaction(client);
