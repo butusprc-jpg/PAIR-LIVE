@@ -1,0 +1,55 @@
+name: V12 PostgreSQL integration
+on:
+  push:
+    branches: [test/pair-live-v12-postgresql-ci]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      TOPUP_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      WALLET_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      OWNER_OA_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      PAIR_ROUND_TEST_ISOLATED: '1'
+      PAIR_ROUND_MODE_TEST_ISOLATED: '1'
+      PAIR_ROUND_RULES_TEST_ISOLATED: '1'
+      PAIR_BUSINESS_TEST_ISOLATED: '1'
+      PAIR_RESET_TEST_ISOLATED: '1'
+      PAIR_MANUAL_START_TEST_ISOLATED: '1'
+      PAIR_LIVE_BROADCAST_TEST_ISOLATED: '1'
+      PAIR_WORKER_RELEASE_TEST_ISOLATED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install OCR dependencies
+        run: sudo apt-get update && sudo apt-get install -y imagemagick tesseract-ocr
+      - run: npm ci
+      - name: Apply and verify migrations on disposable CI database
+        run: |
+          npm run db:migrate -- --apply
+          npm run db:migrate -- --validate
+      - name: PostgreSQL integration and regression
+        run: |
+          npm test -- --test-concurrency=1 2>&1 | tee /tmp/v12-tests.log
+          if grep -E '^ℹ skipped [1-9]|^# skipped [1-9]' /tmp/v12-tests.log; then echo 'Unexpected skipped tests'; exit 1; fi
+      - run: npx tsc --noEmit
+      - run: npm run build
