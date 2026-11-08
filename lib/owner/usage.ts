@@ -1,0 +1,33 @@
+import type {Pool} from 'pg';
+import {OwnerError} from './errors';
+import {connectedToken,fetchLineUsage} from './usage-line';
+import type {OwnerActor} from './store';
+const bangkokDay=(date:Date)=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bangkok',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
+const defaults={enabled:true,threshold70:true,threshold85:true,threshold95:true,threshold100:true};
+export async function ownerUsage(db:Pool,now=new Date(),fetcher:typeof fetch=fetch){
+ const oa=(await db.query<{id:string;line_oa_id:string;shop_name:string;enabled:boolean;paused:boolean;expires_at:Date;verified_token_hash:string|null}>(`SELECT id,line_oa_id,shop_name,enabled,paused,expires_at,verified_token_hash FROM oa_service_control WHERE deleted_at IS NULL ORDER BY created_at,id`)).rows;
+ const connected=oa.find(r=>r.line_oa_id===process.env.CONNECTED_LINE_OA_ID&&!!connectedToken(r));
+ const today=bangkokDay(now),month=today.slice(0,7);
+ // The legacy member/round tables have no OA FK: attribute them only to the verified single binding.
+ let members:number|null=null,rounds:number|null=null;
+ if(connected){const [m,r]=await Promise.all([db.query(`SELECT count(DISTINCT member_id)::int AS n FROM member_identities WHERE provider='line' AND provider_channel_id=$1`,[process.env.LINE_LOGIN_CHANNEL_ID||'']),db.query(`SELECT count(*)::int AS n FROM rounds WHERE round_date>=($1::date - interval '29 days') AND round_date<=$1::date`,[today])]);members=m.rows[0].n;rounds=r.rows[0].n;
+  await db.query(`INSERT INTO owner_usage_daily(oa_id,usage_date,round_count,source_status) SELECT $1,round_date,count(*)::bigint,'PARTIAL' FROM rounds WHERE round_date>=($2::date-interval '29 days') AND round_date<=$2::date GROUP BY round_date ON CONFLICT(oa_id,usage_date) DO UPDATE SET round_count=excluded.round_count,updated_at=now()`,[connected.id,today]);
+  await db.query(`INSERT INTO owner_usage_daily(oa_id,usage_date,member_count,round_count,source_status) VALUES($1,$2,$3,(SELECT count(*) FROM rounds WHERE round_date=$2::date),'PARTIAL') ON CONFLICT(oa_id,usage_date) DO UPDATE SET member_count=excluded.member_count,round_count=excluded.round_count,updated_at=now()`,[connected.id,today,members]);
+ }
+ const history=(await db.query(`SELECT oa_id,usage_date::text AS day,member_count,round_count,api_requests,line_messages_used,line_quota,source_status,updated_at FROM owner_usage_daily WHERE usage_date>=($1::date-interval '29 days') AND usage_date<=$1::date ORDER BY usage_date,oa_id`,[today])).rows;
+ const settings=(await db.query(`SELECT oa_id,enabled,threshold_70,threshold_85,threshold_95,threshold_100 FROM owner_usage_alert_settings`)).rows;
+ const api=(await db.query(`SELECT oa_id,sum(request_count)::bigint AS count FROM owner_usage_api_batches WHERE usage_date>=date_trunc('month',$1::date)::date AND usage_date<date_trunc('month',$1::date)::date+interval '1 month' GROUP BY oa_id`,[today])).rows;
+ const usage=[];
+ for(const row of oa){const token=connectedToken(row);const misconfigured=row.line_oa_id===process.env.CONNECTED_LINE_OA_ID&&!!process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN&&!token;
+  const line=misconfigured?{status:'ERROR' as const,used:null,quota:null,quotaType:null,fetchedAt:null,errorCode:'CREDENTIAL_MISMATCH'}:await fetchLineUsage(row.id,token,fetcher,now.getTime());
+  if(token){await db.query(`INSERT INTO owner_usage_line_snapshots(oa_id,quota_type,quota,used,fetch_status,fetched_at,attempted_at,error_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(oa_id) DO UPDATE SET quota_type=excluded.quota_type,quota=excluded.quota,used=excluded.used,fetch_status=excluded.fetch_status,fetched_at=excluded.fetched_at,attempted_at=excluded.attempted_at,error_code=excluded.error_code WHERE owner_usage_line_snapshots.attempted_at<excluded.attempted_at`,[row.id,line.quotaType,line.quota,line.used,line.status,line.fetchedAt,now,line.errorCode||null]);
+   if(line.status==='OK')await db.query(`UPDATE owner_usage_daily SET line_messages_used=$3,line_quota=$4,updated_at=now() WHERE oa_id=$1 AND usage_date=$2`,[row.id,today,line.used,line.quota]);
+  }
+  const s=settings.find(x=>x.oa_id===row.id),monthApi=api.find(x=>x.oa_id===row.id);
+  usage.push({id:row.id,name:row.shop_name,lineOaId:row.line_oa_id,status:!row.enabled?'PAUSED':row.paused?'PAUSED':row.expires_at<=now?'EXPIRED':'ACTIVE',expiresAt:row.expires_at,memberCount:connected?.id===row.id?members:null,roundCount:connected?.id===row.id?rounds:null,apiRequests:monthApi?Number(monthApi.count):null,apiSource:monthApi?'PARTIAL':'UNAVAILABLE',line,remaining:line.quota!==null&&line.used!==null?Math.max(0,line.quota-line.used):null,alerts:s?{enabled:s.enabled,threshold70:s.threshold_70,threshold85:s.threshold_85,threshold95:s.threshold_95,threshold100:s.threshold_100}:defaults});
+ }
+ return {updatedAt:now.toISOString(),month,summary:{totalOas:oa.length,activeOas:usage.filter(x=>x.status==='ACTIVE').length,knownMembers:members,memberCoverage:connected?'CONNECTED_ONLY':'UNAVAILABLE',lineMessagesUsed:usage.some(x=>x.line.status==='OK')?usage.reduce((n,x)=>n+(x.line.used||0),0):null,apiRequests:api.length?api.reduce((n,x)=>n+Number(x.count),0):null,roundCount:rounds},oas:usage,history,shared:{vercelInvocations:null,vercelBandwidth:null,neonStorage:null,neonCompute:null,status:'UNAVAILABLE'}};
+}
+export async function updateUsageAlerts(db:Pool,actor:OwnerActor & {sessionHash:string},oaId:string,input:Record<string,unknown>){if(!/^[0-9a-f-]{36}$/i.test(oaId))throw new OwnerError('invalid_oa_id',400);
+ const fields=['enabled','threshold70','threshold85','threshold95','threshold100'] as const;if(fields.some(f=>typeof input[f]!=='boolean'))throw new OwnerError('invalid_settings',400);
+ const c=await db.connect();try{await c.query('BEGIN');const found=await c.query('SELECT id FROM oa_service_control WHERE id=$1 AND deleted_at IS NULL FOR SHARE',[oaId]);if(!found.rowCount)throw new OwnerError('oa_not_found',404);const before=await c.query('SELECT * FROM owner_usage_alert_settings WHERE oa_id=$1 FOR UPDATE',[oaId]);const after=(await c.query(`INSERT INTO owner_usage_alert_settings(oa_id,enabled,threshold_70,threshold_85,threshold_95,threshold_100) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(oa_id) DO UPDATE SET enabled=$2,threshold_70=$3,threshold_85=$4,threshold_95=$5,threshold_100=$6,updated_at=now() RETURNING *`,[oaId,...fields.map(f=>input[f])])).rows[0];await c.query('INSERT INTO owner_usage_alert_audit(oa_id,actor_session_hash,before_settings,after_settings) VALUES($1,$2,$3,$4)',[oaId,actor.sessionHash,before.rows[0]?JSON.stringify(before.rows[0]):null,JSON.stringify(after)]);await c.query('COMMIT');return {ok:true}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}

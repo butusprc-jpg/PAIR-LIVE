@@ -1,0 +1,24 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {randomUUID,createHash} from 'node:crypto';import {Pool} from 'pg';
+import {assertTestTarget} from '../lib/migration-manifest';
+import {ownerUsage,updateUsageAlerts} from '../lib/owner/usage';
+import {clearLineUsageCache} from '../lib/owner/usage-line';
+const raw=process.env.OWNER_USAGE_TEST_DATABASE_URL;
+test('V13 daily snapshots and alerts isolate unconnected OA and respect RLS',{skip:!raw},async()=>{
+ const db=new Pool({connectionString:assertTestTarget(raw),ssl:false,max:5});const suffix=randomUUID().slice(0,8),connected='@usage_a_'+suffix,other='@usage_b_'+suffix,ids:string[]=[];let member='',round=0;
+ const prev={oa:process.env.CONNECTED_LINE_OA_ID,token:process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN,channel:process.env.LINE_LOGIN_CHANNEL_ID};
+ try{
+  const token='synthetic-v13-token',hash=createHash('sha256').update(token).digest('hex');process.env.CONNECTED_LINE_OA_ID=connected;process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=token;process.env.LINE_LOGIN_CHANNEL_ID='synthetic-v13-channel';
+  for(const [name,verified] of [[connected,hash],[other,null]])ids.push((await db.query('INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES($1,$2,true,now()+interval \'30 days\',$3) RETURNING id',[name,name,verified])).rows[0].id);
+  member=(await db.query("INSERT INTO members(display_name) VALUES('Synthetic V13') RETURNING id")).rows[0].id;
+  await db.query("INSERT INTO member_identities(member_id,provider,provider_user_id,provider_channel_id) VALUES($1,'line',$2,$3)",[member,'synthetic-v13-'+suffix,'synthetic-v13-channel']);
+  const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bangkok',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  round=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status) VALUES($1,now()-interval '10 minutes',now()-interval '5 minutes',5,'SETTLED') RETURNING id",[day])).rows[0].id;
+  clearLineUsageCache();const fake=async(url:string)=>Response.json(url.endsWith('consumption')?{totalUsage:7}:{type:'limited',value:20});
+  const result=await ownerUsage(db,new Date(),fake as typeof fetch);const a=result.oas.find(x=>x.id===ids[0])!,b=result.oas.find(x=>x.id===ids[1])!;
+  assert.equal(a.memberCount,1);assert.equal(a.roundCount,1);assert.equal(a.line.used,7);assert.equal(a.remaining,13);assert.equal(b.memberCount,null);assert.equal(b.roundCount,null);assert.equal(b.line.status,'NOT_CONNECTED');assert.equal(b.line.used,null);
+  const past=(await db.query('SELECT count(*)::int n FROM owner_usage_daily WHERE oa_id=$1',[ids[1]])).rows[0].n;assert.equal(past,0);
+  const batch=randomUUID();await db.query('INSERT INTO owner_usage_api_batches(batch_id,oa_id,usage_date,request_count) VALUES($1,$2,$3,4) ON CONFLICT DO NOTHING',[batch,ids[0],day]);await db.query('INSERT INTO owner_usage_api_batches(batch_id,oa_id,usage_date,request_count) VALUES($1,$2,$3,4) ON CONFLICT DO NOTHING',[batch,ids[0],day]);assert.equal((await db.query('SELECT sum(request_count)::int n FROM owner_usage_api_batches WHERE batch_id=$1',[batch])).rows[0].n,4);
+  const actor={channelId:'synthetic',userId:'synthetic',sessionHash:'a'.repeat(64)};await updateUsageAlerts(db,actor,ids[0],{enabled:true,threshold70:true,threshold85:false,threshold95:true,threshold100:true});assert.equal((await db.query('SELECT count(*)::int n FROM owner_usage_alert_audit WHERE oa_id=$1',[ids[0]])).rows[0].n,1);
+  const c=await db.connect();try{await c.query('BEGIN');await c.query('CREATE ROLE v13_reader_'+suffix+' NOLOGIN');await c.query('GRANT USAGE ON SCHEMA public TO v13_reader_'+suffix);await c.query('GRANT SELECT ON owner_usage_daily TO v13_reader_'+suffix);await c.query('SET LOCAL ROLE v13_reader_'+suffix);assert.equal((await c.query('SELECT * FROM owner_usage_daily')).rowCount,0)}finally{await c.query('ROLLBACK');c.release()}
+ }finally{for(const [k,v] of Object.entries({CONNECTED_LINE_OA_ID:prev.oa,LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:prev.token,LINE_LOGIN_CHANNEL_ID:prev.channel})){if(v===undefined)delete process.env[k];else process.env[k]=v}if(round)await db.query('DELETE FROM rounds WHERE id=$1',[round]);if(member){await db.query('DELETE FROM member_identities WHERE member_id=$1',[member]);await db.query('DELETE FROM members WHERE id=$1',[member])}for(const id of ids){await db.query('DELETE FROM owner_usage_alert_audit WHERE oa_id=$1',[id]);await db.query('DELETE FROM owner_usage_alert_settings WHERE oa_id=$1',[id]);await db.query('DELETE FROM owner_usage_api_batches WHERE oa_id=$1',[id]);await db.query('DELETE FROM owner_usage_daily WHERE oa_id=$1',[id]);await db.query('DELETE FROM owner_usage_line_snapshots WHERE oa_id=$1',[id]);await db.query('DELETE FROM oa_service_control WHERE id=$1',[id])}await db.end()}
+});
