@@ -26,6 +26,7 @@ jobs:
       WALLET_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       OWNER_OA_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      COUNTDOWN_V11_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       PAIR_ROUND_TEST_ISOLATED: '1'
       PAIR_ROUND_MODE_TEST_ISOLATED: '1'
       PAIR_ROUND_RULES_TEST_ISOLATED: '1'
@@ -55,7 +56,7 @@ jobs:
       - name: PostgreSQL integration and regression
         id: tests
         run: |
-          npm test -- --test-concurrency=1 2>&1 | tee /tmp/v12-tests.log
+          node --import tsx --test --test-concurrency=1 tests/*.test.ts modules/external-live/tests/*.test.ts 2>&1 | tee /tmp/v12-tests.log
           if grep -E '^ℹ skipped [1-9]|^# skipped [1-9]' /tmp/v12-tests.log; then echo 'Unexpected skipped tests'; exit 1; fi
       - name: TypeScript
         if: always()
