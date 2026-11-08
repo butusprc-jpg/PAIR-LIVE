@@ -13,7 +13,7 @@ test('V13 extension accepts V12 028–030 arriving later only',()=>{
  assert.doesNotThrow(()=>assertMigrationOrder([...migrationPaths],new Set(migrationPaths)));
 });
 test('main migration filenames and numbers cannot collide across branches',()=>{
- assert.doesNotThrow(()=>assertUniqueMigrationNumbers([...migrationPaths.slice(0,-1),'migrations/028_external_live_tenants.sql','migrations/029_external_live_tenant_security.sql','migrations/030_external_live_schema_binding.sql',migrationPaths.at(-1)!]));
+ assert.doesNotThrow(()=>assertUniqueMigrationNumbers([...migrationPaths]));
  assert.throws(()=>assertUniqueMigrationNumbers([...migrationPaths,'migrations/030_external_live_schema_binding.sql','migrations/030_owner_usage_metrics.sql']),/duplicate_migration_number/);
  assert.throws(()=>assertUniqueMigrationNumbers([...migrationPaths,migrationPaths.at(-1)!]),/duplicate_migration_filename/);
 });

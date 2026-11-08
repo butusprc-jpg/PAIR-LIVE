@@ -57,6 +57,7 @@ jobs:
       - name: PostgreSQL integration and regression
         id: tests
         run: |
+          set -o pipefail
           node --import tsx --test --test-concurrency=1 tests/*.test.ts modules/external-live/tests/*.test.ts 2>&1 | tee /tmp/v12-tests.log
           if grep -E '^ℹ skipped [1-9]|^# skipped [1-9]' /tmp/v12-tests.log; then echo 'Unexpected skipped tests'; exit 1; fi
       - name: TypeScript
