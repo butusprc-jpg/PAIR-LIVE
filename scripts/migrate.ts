@@ -1,6 +1,6 @@
 import {Pool} from 'pg';
 import {expectedTables} from '../lib/schema-tables';
-import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
+import {assertTestTarget,migrationManifest,assertMigrationOrder} from '../lib/migration-manifest';
 async function main(){
 const mode=process.argv[2];
 if(!['--dry-run','--validate','--apply'].includes(mode)){console.error('usage: npm run db:migrate -- --dry-run|--validate|--apply (isolated local test DB only)');process.exit(2)}
@@ -15,7 +15,9 @@ try{const client=await pool.connect();try{
   const installed=new Map<string,string>();
   if(found.rows[0].name){const rows=await client.query('SELECT path,sha256 FROM schema_migration_history ORDER BY path');for(const row of rows.rows)installed.set(row.path,row.sha256)}
   const known=new Set<string>(manifest.map(m=>m.path));for(const path of installed.keys())if(!known.has(path))throw new Error('unknown_installed_migration');
-  let gap=false;for(const item of manifest){const hash=installed.get(item.path);if(hash&&hash!==item.sha256)throw new Error(`migration_hash_mismatch: ${item.path}`);if(!hash)gap=true;else if(gap)throw new Error(`migration_order_gap: ${item.path}`)}
+  for(const item of manifest){const hash=installed.get(item.path);if(hash&&hash!==item.sha256)throw new Error(`migration_hash_mismatch: ${item.path}`)}
+  assertMigrationOrder(manifest.map(m=>m.path),new Set(installed.keys()));
+  const gap=manifest.some(item=>!installed.has(item.path));
   if(mode==='--validate'&&gap)throw new Error('pending_migrations');
   if(mode==='--apply'){
    if(!found.rows[0].name){const existing=await client.query("SELECT count(*)::int AS count FROM pg_tables WHERE schemaname='public'");if(existing.rows[0].count!==0)throw new Error('untracked_existing_tables');await client.query('CREATE TABLE schema_migration_history(path text PRIMARY KEY,sha256 char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())')}

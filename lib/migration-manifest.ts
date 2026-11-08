@@ -32,6 +32,16 @@ export const migrationPaths=[
  'migrations/025_round_countdown_member_line.sql',
  'migrations/026_round_reset_epoch.sql',
  'migrations/027_round_reset_rls_access.sql',
+ 'migrations/030_owner_usage_metrics.sql',
 ] as const;
 export async function migrationManifest(root=process.cwd()){return Promise.all(migrationPaths.map(async path=>{const sql=await readFile(resolve(root,path),'utf8');return {path,sql,sha256:createHash('sha256').update(sql).digest('hex')}}))}
 export function assertTestTarget(raw:string|undefined){if(!raw)throw new Error('test_database_url_missing');let url:URL;try{url=new URL(raw)}catch{throw new Error('invalid_test_database_url')}if(!['postgres:','postgresql:'].includes(url.protocol)||!['localhost','127.0.0.1','::1'].includes(url.hostname)||url.pathname!=='/pair_live_migration_test')throw new Error('test_target_guard_rejected');return raw}
+
+// V12 can be merged after V13 was installed. Only its reserved 028/029 files
+// may be inserted before an already-installed 030; all other gaps stay fatal.
+export function assertMigrationOrder(paths:readonly string[],installed:Set<string>){
+ const prior:string[]=[];
+ for(const path of paths){if(!installed.has(path)){prior.push(path);continue}
+  if(prior.some(missing=>!(installed.has('migrations/030_owner_usage_metrics.sql')&&/^migrations\/0(?:28|29)_[^/]+\.sql$/.test(missing))))throw new Error(`migration_order_gap: ${path}`)
+ }
+}
