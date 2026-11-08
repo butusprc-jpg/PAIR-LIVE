@@ -98,4 +98,11 @@ test('concurrent epoch resets archive pending rounds once without changing point
  await db.query("UPDATE rounds SET status='SETTLED',settled_at=now() WHERE id=$1",[opened.round!.id]);
  await db.query('UPDATE oa_service_control SET enabled=false WHERE id=$1',[oaId]);
  await resetDb.end();await db.end();delete process.env.ROUND_RESET_DATABASE_URL;
+ const cleanup=new Pool({connectionString:process.env.DATABASE_URL,ssl:false});try{
+  await cleanup.query(`REVOKE pair_round_reset_executor FROM ${role}`);
+  await cleanup.query(`DROP OWNED BY ${role}`);
+  await cleanup.query(`DROP ROLE ${role}`);
+  await cleanup.query(`DROP OWNED BY ${memberRole}`);
+  await cleanup.query(`DROP ROLE ${memberRole}`);
+ }finally{await cleanup.end()}
 });

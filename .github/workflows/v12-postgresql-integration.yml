@@ -34,6 +34,8 @@ jobs:
       PAIR_MANUAL_START_TEST_ISOLATED: '1'
       PAIR_LIVE_BROADCAST_TEST_ISOLATED: '1'
       PAIR_WORKER_RELEASE_TEST_ISOLATED: '1'
+      CONNECTED_LINE_OA_ID: '@v12-ci'
+      LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: synthetic-ci-oa-token
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -47,9 +49,17 @@ jobs:
         run: |
           npm run db:migrate -- --apply
           npm run db:migrate -- --validate
+      - name: Bind synthetic CI OA for legacy round fixtures
+        run: |
+          PGPASSWORD=synthetic_test_password psql -h 127.0.0.1 -U pair_test -d pair_live_migration_test -v ON_ERROR_STOP=1 -c "INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES('@v12-ci','Synthetic CI',true,now()+interval '1 day','2b71d9165a9410ebb8c7e5ba533af33dcf73ae773e0d3dc841171b4cb9cda067')"
       - name: PostgreSQL integration and regression
+        id: tests
         run: |
           npm test -- --test-concurrency=1 2>&1 | tee /tmp/v12-tests.log
           if grep -E '^ℹ skipped [1-9]|^# skipped [1-9]' /tmp/v12-tests.log; then echo 'Unexpected skipped tests'; exit 1; fi
-      - run: npx tsc --noEmit
-      - run: npm run build
+      - name: TypeScript
+        if: always()
+        run: npx tsc --noEmit
+      - name: Build
+        if: always()
+        run: npm run build
