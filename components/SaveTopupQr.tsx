@@ -1,6 +1,5 @@
 'use client';
 import {useState} from 'react';
-import liff from '@line/liff';
 import {isLineWebView} from '../lib/topup/qr-navigation';
 import {initLIFF} from '../lib/liff';
 export function SaveTopupQr({version:_version}:{version:number}){
@@ -16,7 +15,7 @@ export function SaveTopupQr({version:_version}:{version:number}){
    if(isLineWebView(navigator.userAgent)){
     const auth=await initLIFF();
     if(!auth)return;
-    liff.openWindow({url:result.url,external:true});
+    auth.client.openWindow({url:result.url,external:true});
     setMessage('หากภาพยังอยู่ใน LINE ให้เลือกเมนู ⋯ แล้วเปิดในเบราว์เซอร์ภายนอก');
    }else window.location.assign(result.url);
   }catch{setMessage('เปิด QR ไม่สำเร็จ กรุณาลองใหม่')}

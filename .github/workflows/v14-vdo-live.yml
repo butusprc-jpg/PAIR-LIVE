@@ -2,6 +2,8 @@ name: V14.5 VDO and low API traffic
 on:
   push:
     branches: [feat/pair-live-v14-3-remote-control, feat/pair-live-v14-5-ci-low-api-traffic]
+  pull_request:
+    branches: [feat/pair-live-v14-5-ci-low-api-traffic]
   workflow_dispatch:
 permissions:
   contents: read
