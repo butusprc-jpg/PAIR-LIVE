@@ -13,3 +13,9 @@ test('admin settings menu navigates from direct or LIFF-wrapped view without ext
 });
 
 test('withdrawal deep link is separate from wallet and topup',()=>{assert.equal(memberEntry('?entry=withdraw'),'withdraw');assert.equal(memberEntryFromLiff('?liff.state=%3Fentry%3Dwithdraw'),'withdraw');assert.equal(memberEntry('?entry=wallet'),'wallet');assert.equal(memberEntry('?entry=topup'),'topup')});
+test('header navigation survives refresh without entering the admin view',()=>{
+ for(const entry of ['live','stats','profile','topup','withdraw'] as const){
+  assert.equal(memberEntry('?entry='+entry),entry);
+  assert.equal(adminViewFromLiff('?entry='+entry),false);
+ }
+});
