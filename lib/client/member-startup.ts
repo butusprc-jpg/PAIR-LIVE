@@ -15,3 +15,19 @@ export async function memberStartup(fetcher:typeof fetch=fetch):Promise<MemberSt
  if(!data.member?.id)throw new Error('member_session_unavailable');
  return {kind:'member',member:data.member};
 }
+
+/** Deduplicate overlapping session checks; a completed response never substitutes for server authorization. */
+export function sessionCheck(fetcher:typeof fetch=fetch){
+ let inflight:Promise<MemberStartup>|null=null,lastChecked=0;
+ return {
+  check(force=false,now=Date.now()):Promise<MemberStartup|null>{
+   if(inflight)return inflight;
+   if(!force&&lastChecked&&now-lastChecked<15_000)return Promise.resolve(null);
+   const request=memberStartup(fetcher).then(result=>{lastChecked=Date.now();return result});
+   inflight=request;
+   void request.finally(()=>{if(inflight===request)inflight=null}).catch(()=>{});
+   return request;
+  },
+  reset(){lastChecked=0}
+ };
+}

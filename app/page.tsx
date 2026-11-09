@@ -4,7 +4,7 @@ import {Activity,BarChart3,Camera,ChevronRight,Coins,History,LogOut,Moon,Play,Su
 import type {Round} from '../lib/rounds/core';
 import {remainingRoundSeconds,serverClockOffset} from '../lib/rounds/countdown';
 import {adaptivePoll} from '../lib/client/adaptive-poll';
-import {memberStartup} from '../lib/client/member-startup';
+import {sessionCheck} from '../lib/client/member-startup';
 import {memberEntryFromLiff as memberEntry,adminViewFromLiff} from '../lib/member-entry';
 import {MemberTopup} from '../components/Topup';
 import {MemberWithdraw} from '../components/Withdraw';
@@ -31,24 +31,41 @@ export default function Home(){
  const[walletMode,setWalletMode]=useState<'loading'|'wallet'|'legacy'|'error'>('loading'),[walletData,setWalletData]=useState<{id:string;availablePoints:number;reservedPoints:number;status:'ACTIVE'|'FROZEN';updatedAt:string}|null>(null),[walletHistory,setWalletHistory]=useState<LedgerView[]>([]),[walletHistoryOpen,setWalletHistoryOpen]=useState(false);
  const[entries,setEntries]=useState<Entry[]>([]),[historyDate,setHistoryDate]=useState(()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Bangkok'})),[confirmOpen,setConfirmOpen]=useState(false),[detail,setDetail]=useState<Entry|null>(null),[toast,setToast]=useState('');
  const formRef=useRef<HTMLDivElement>(null),idempotencyKey=useRef<string|null>(null),loginInFlight=useRef(false);
+ const sessionGate=useRef<ReturnType<typeof sessionCheck>|null>(null),memberId=useRef<string|null>(null),walletCheckedAt=useRef(0);
+ sessionGate.current??=sessionCheck();
  function acceptMember(member:{id:string;displayName:string;avatarUrl:string|null;provider:string;demoPoints:number},isActive:()=>boolean){
   if(!isActive())return;
+  if(memberId.current===member.id){
+   setAuth('member');
+   if(Date.now()-walletCheckedAt.current>=60_000){
+    walletCheckedAt.current=Date.now();
+    void fetch('/api/member/wallet',{cache:'no-store',credentials:'same-origin'}).then(async response=>{
+     if(!isActive()||memberId.current!==member.id)return;
+     if(!response.ok){const error=await response.json().catch(()=>({error:''}));if(error.error==='wallet_not_activated'&&isActive()&&memberId.current===member.id)setBalance(member.demoPoints);return}
+     const value=await response.json();if(isActive()&&memberId.current===member.id){setWalletData(value.wallet);setBalance(value.wallet.availablePoints)}
+    }).catch(()=>{});
+   }
+   return;
+  }
+  memberId.current=member.id;
+  walletCheckedAt.current=Date.now();
+  setWalletData(null);setWalletHistory([]);setWalletMode('loading');setBalance(0);setEntries([]);
   setProfile(member);setAuth('member');
   void fetch('/api/member/wallet',{cache:'no-store',credentials:'same-origin'}).then(async wallet=>{
-   if(wallet.ok){const value=await wallet.json();if(isActive()){setWalletData(value.wallet);setBalance(value.wallet.availablePoints);setWalletMode('wallet')}}
-   else{const error=await wallet.json().catch(()=>({error:'wallet_unavailable'}));if(isActive()){if(error.error==='wallet_not_activated'){setBalance(member.demoPoints);setWalletMode('legacy')}else setWalletMode('error')}}
-  }).catch(()=>{if(isActive())setWalletMode('error')});
+   if(wallet.ok){const value=await wallet.json();if(isActive()&&memberId.current===member.id){setWalletData(value.wallet);setBalance(value.wallet.availablePoints);setWalletMode('wallet')}}
+   else{const error=await wallet.json().catch(()=>({error:'wallet_unavailable'}));if(isActive()&&memberId.current===member.id){if(error.error==='wallet_not_activated'){setBalance(member.demoPoints);setWalletMode('legacy')}else setWalletMode('error')}}
+  }).catch(()=>{if(isActive()&&memberId.current===member.id)setWalletMode('error')});
   void fetch('/api/round/my-entries',{cache:'no-store',credentials:'same-origin'}).then(async history=>{
-   if(!history.ok)return;const value=await history.json();if(isActive())setEntries(value.entries.map((entry:{round_id:string;side:string;demo_points:number;status:string;created_at:string})=>({id:String(entry.round_id),date:new Date(entry.created_at).toLocaleDateString('en-CA',{timeZone:'Asia/Bangkok'}),time:new Date(entry.created_at).toLocaleTimeString('en-GB',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit'}),side:entry.side==='even'?'คู่':'คี่',points:entry.demo_points,result:entry.status==='CORRECT'?'ถูก':entry.status==='INCORRECT'?'ผิด':'รอผล'})))
+   if(!history.ok)return;const value=await history.json();if(isActive()&&memberId.current===member.id)setEntries(value.entries.map((entry:{round_id:string;side:string;demo_points:number;status:string;created_at:string})=>({id:String(entry.round_id),date:new Date(entry.created_at).toLocaleDateString('en-CA',{timeZone:'Asia/Bangkok'}),time:new Date(entry.created_at).toLocaleTimeString('en-GB',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit'}),side:entry.side==='even'?'คู่':'คี่',points:entry.demo_points,result:entry.status==='CORRECT'?'ถูก':entry.status==='INCORRECT'?'ผิด':'รอผล'})))
   }).catch(()=>{});
  }
  useEffect(()=>{let active=true;(async()=>{try{
-  const result=await memberStartup();if(!active)return;
+  const result=await sessionGate.current!.check(true);if(!active||!result)return;
   if(result.kind==='login'){setRuntime(result.runtime);if(result.runtime.wechatConfigured&&/MicroMessenger/i.test(navigator.userAgent)){window.location.assign('/api/auth/wechat/start?next='+encodeURIComponent(location.pathname+location.search));return}setAuth('login');return}
   acceptMember(result.member,()=>active);
  }catch(error){if(active){setAuthError(error instanceof Error?error.message:'เกิดข้อผิดพลาด');setAuth('error')}}})();return()=>{active=false}},[]);
  useEffect(()=>{if(auth==='member'&&memberEntry(location.search)==='history')setTimeout(()=>document.getElementById('round-history')?.scrollIntoView({behavior:'smooth'}),400)},[auth]);
- useEffect(()=>{if(auth!=='member')return;let active=true,busy=false;const refresh=async()=>{if(!active||busy||document.visibilityState!=='visible')return;busy=true;try{const result=await memberStartup();if(!active)return;if(result.kind==='login'){setProfile(null);setWalletData(null);setBalance(0);setEntries([]);setRuntime(result.runtime);setAuth('login');return}if(result.member.id!==profile?.id){setWalletData(null);setBalance(0);setEntries([]);setWalletMode('loading')}acceptMember(result.member,()=>active)}catch(error){if(active){setAuthError(error instanceof Error?error.message:'session_unavailable');setAuth('error')}}finally{busy=false}};const onVisible=()=>{if(document.visibilityState==='visible')void refresh()};document.addEventListener('visibilitychange',onVisible);return()=>{active=false;document.removeEventListener('visibilitychange',onVisible)}},[auth,profile?.id]);
+ useEffect(()=>{if(auth!=='member')return;let active=true;const refresh=async()=>{if(!active||document.visibilityState!=='visible')return;try{const result=await sessionGate.current!.check();if(!active||!result)return;if(result.kind==='login'){memberId.current=null;setProfile(null);setWalletData(null);setBalance(0);setEntries([]);setRuntime(result.runtime);setAuth('login');return}acceptMember(result.member,()=>active)}catch{/* A temporary network failure must not trigger LINE login or reload the page. */}};const onVisible=()=>{if(document.visibilityState==='visible')void refresh()};document.addEventListener('visibilitychange',onVisible);window.addEventListener('online',onVisible);return()=>{active=false;document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('online',onVisible)}},[auth]);
  useEffect(()=>{if(auth!=='member'||profile?.provider!=='line')return;fetch('/api/member/countdown-notifications',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(v=>{if(v)setLineNotice(v.enabled===true)}).catch(()=>{})},[auth,profile?.provider]);
  useEffect(()=>{if(auth==='login'&&runtime.lineConfigured&&/Line\//i.test(navigator.userAgent)&&!adminViewFromLiff(location.search))void loginLine()},[auth,runtime.lineConfigured]);
  useEffect(()=>{if(adminViewFromLiff(location.search)){setAdminEntry(true);return}const entry=memberEntry(location.search);if(entry==='wallet')setPage('wallet');if(entry==='topup')setPage('topup');if(entry==='withdraw')setPage('withdraw')},[]);
@@ -59,7 +76,7 @@ export default function Home(){
  function notice(message:string){setToast(message)}
  function submit(){const count=Number(points);if(!open||walletMode==='loading'||walletMode==='error'||walletData?.status==='FROZEN')return;if(!side){notice('กรุณาเลือกคู่หรือคี่');return}if(!Number.isInteger(count)||count<1){notice('กรุณากรอกแต้มจำนวนเต็มมากกว่า 0');return}if(count>balance){notice('แต้มไม่เพียงพอ');return}setConfirmOpen(true)}
  async function confirm(){const count=Number(points);if(!round||!side){setConfirmOpen(false);return}idempotencyKey.current??=crypto.randomUUID();try{const response=await fetch('/api/round/entries',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({roundId:round.id,side:side==='คู่'?'even':'odd',demoPoints:count,idempotencyKey:idempotencyKey.current})});const data=await response.json();if(!response.ok)throw new Error(data.error||'ส่งรายการไม่สำเร็จ');if(typeof data.walletBalance==='number'){setBalance(data.walletBalance);setWalletData(v=>v?{...v,availablePoints:data.walletBalance}:v)}else if(walletMode==='wallet'){const refreshed=await fetch('/api/member/wallet',{cache:'no-store'});if(refreshed.ok){const current=await refreshed.json();setBalance(current.wallet.availablePoints);setWalletData(current.wallet)}}else setBalance(v=>data.replayed?v:v-count);if(!data.replayed)setEntries(v=>[{id:round.id,date:new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Bangkok'}),time:new Date().toLocaleTimeString('en-GB',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit'}),side,points:count,result:'รอผล'},...v]);idempotencyKey.current=null;setConfirmOpen(false);notice(data.replayed?'รายการนี้ส่งแล้ว · รอผล':'ส่งรายการแล้ว · สถานะรอผล');window.dispatchEvent(new Event('pair-live:member-change'))}catch(error){setConfirmOpen(false);notice(error instanceof Error?error.message:'ส่งรายการไม่สำเร็จ')}}
- async function loginLine(){if(loginInFlight.current)return;loginInFlight.current=true;try{setAuth('loading');const {initLIFF}=await import('../lib/liff');const result=await initLIFF();if(!result)return;const response=await fetch('/api/auth/line',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({accessToken:result.accessToken,rememberSession})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'line_login_failed');const session=await fetch('/api/auth/session',{cache:'no-store',credentials:'same-origin'});if(!session.ok)throw new Error('member_session_unavailable');const confirmed=await session.json();acceptMember(confirmed.member,()=>true)}catch(error){setAuthError(error instanceof Error?error.message:'LINE Login failed');setAuth('error')}finally{loginInFlight.current=false}}
+ async function loginLine(){if(loginInFlight.current)return;loginInFlight.current=true;try{setAuth('loading');const {initLIFF}=await import('../lib/liff');const result=await initLIFF();if(!result)return;const response=await fetch('/api/auth/line',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({accessToken:result.accessToken,rememberSession})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'line_login_failed');sessionGate.current!.reset();const confirmed=await sessionGate.current!.check(true);if(!confirmed||confirmed.kind!=='member')throw new Error('member_session_unavailable');acceptMember(confirmed.member,()=>true)}catch(error){setAuthError(error instanceof Error?error.message:'LINE Login failed');setAuth('error')}finally{loginInFlight.current=false}}
  if(adminEntry)return <AdminEntry/>;
  if(auth==='loading')return <div className="app auth-screen"><div className="card"><p>กำลังโหลดข้อมูลสมาชิก...</p></div></div>;
  if(auth!=='member')return <div className="app auth-screen"><div className="card"><div className="brand">PAIR<span>LIVE</span></div><h1>เข้าสู่ระบบสมาชิก</h1>{auth==='error'&&<p role="alert" className="urgent-note">{authError}</p>}<p className="muted">เปิดผ่าน Rich Menu ของ LINE OA หรือ WeChat OA เพื่อยืนยันตัวตน</p>{runtime.lineConfigured&&<><label className="setting-row">จดจำการเข้าสู่ระบบสูงสุด 30 วัน<input type="checkbox" checked={rememberSession} onChange={event=>setRememberSession(event.target.checked)}/></label><button className="primary" onClick={loginLine}>เข้าสู่ระบบด้วย LINE</button></>}{runtime.wechatConfigured&&<a className="primary auth-link" href="/api/auth/wechat/start">เข้าสู่ระบบด้วย WeChat</a>}{!runtime.lineConfigured&&!runtime.wechatConfigured&&auth!=='error'&&<p className="badge orange">ยังไม่ได้ตั้งค่าผู้ให้บริการ</p>}{auth==='error'&&<button className="secondary" onClick={()=>location.reload()}>ลองอีกครั้ง</button>}</div></div>;
