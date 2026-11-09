@@ -12,6 +12,6 @@
 1. Back up the database and inspect the migration history. Apply forward-only `036_member_remember_session.sql` through the existing migration process after review. Do not modify prior migrations or the wallet cutover state.
 2. Review the 30-day remember setting, device/shared-phone policy and logout behavior. Test two LINE accounts, two tabs, rotation after 24 hours and a lost response on an authorized staging LIFF device.
 3. Inspect the Vercel Preview and a real LINE In-App Browser with authorized synthetic accounts. The connector currently returns 403 for deployment listing; CI build is not a Preview test.
-4. Measure ten minutes of authenticated request count, PostgreSQL query count and latency on an isolated environment with instrumentation, then compare with the chosen baseline. The deterministic polling tests prove cadence, not real network/database consumption. No unmeasured number is presented as a benchmark.
+4. Review the ten-minute CI browser benchmark against pinned V14.4 on separate disposable PostgreSQL databases. It counts actual HTTP requests, PostgreSQL statement calls and response latency from synthetic sessions, but is not Vercel or Neon telemetry. Repeat on an authorized isolated Preview and Neon test branch before claiming real hosted savings. The deterministic polling tests alone prove cadence, not real network/database consumption.
 
 No production deployment, database migration, automatic OCR decision or wallet cutover is part of this branch.

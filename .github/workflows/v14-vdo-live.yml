@@ -42,3 +42,47 @@ jobs:
         run: node --import tsx scripts/test-round-ci.ts
       - run: npx tsc --noEmit
       - run: npm run build
+  performance:
+    if: github.event_name == 'pull_request' && github.base_ref == 'feat/pair-live-v14-6-liff-session-performance'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y imagemagick tesseract-ocr
+      - run: npm ci
+      - name: Enable PostgreSQL statement counters in disposable service
+        run: |
+          cid=$(docker ps -q --filter ancestor=postgres:16 | head -n 1)
+          test -n "$cid"
+          docker exec "$cid" sh -c 'echo "shared_preload_libraries = '\''pg_stat_statements'\''" >> "$PGDATA/postgresql.conf"'
+          docker restart "$cid"
+          for i in $(seq 1 30); do docker exec "$cid" pg_isready -U pair_test -d pair_live_migration_test && break || sleep 1; done
+      - run: npm run db:migrate -- --apply
+      - run: git worktree add --detach /tmp/pair-live-before 84d80e6ffc042a0a1ad5222f237b2f19f43a573f
+      - run: npm ci
+        working-directory: /tmp/pair-live-before
+      - run: npm run build
+        working-directory: /tmp/pair-live-before
+      - run: npm run build
+      - name: Measure both versions for ten minutes with synthetic cookies
+        run: node --import tsx scripts/measure-v14-traffic.ts
