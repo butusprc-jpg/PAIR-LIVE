@@ -43,6 +43,7 @@ export const migrationPaths=[
  'migrations/036_member_remember_session.sql',
  'migrations/037_oa_credentials.sql',
  'migrations/038_oa_webhook_receipts.sql',
+ 'migrations/039_financial_round_oa_columns.sql',
 ] as const;
 export function assertUniqueMigrationNumbers(paths:readonly string[]){
  const seen=new Map<string,string>(),filenames=new Set<string>();
