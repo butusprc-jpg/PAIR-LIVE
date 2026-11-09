@@ -11,7 +11,7 @@ const v12Paths=[
  'migrations/029_external_live_tenant_security.sql',
  'migrations/030_external_live_schema_binding.sql',
 ];
-const combined=[...migrationPaths.slice(0,-1),...v12Paths,migrationPaths.at(-1)!];
+const combined=[...new Set([...migrationPaths,...v12Paths])];
 assertUniqueMigrationNumbers(combined);
 async function main(){
 const pool=new Pool({connectionString:assertTestTarget(process.env.MIGRATION_TEST_DATABASE_URL),ssl:false,max:1});
@@ -19,8 +19,16 @@ try{
  const client=await pool.connect();
  try{
   const installed=new Set<string>((await client.query('SELECT path FROM schema_migration_history')).rows.map(row=>row.path));
-  if(!installed.has('migrations/031_owner_usage_metrics.sql')||v12Paths.some(path=>installed.has(path)))throw new Error('standalone_v13_history_expected');
+  if(!installed.has('migrations/031_owner_usage_metrics.sql'))throw new Error('v13_history_expected');
   assertMigrationOrder(combined,installed);
+  if(v12Paths.every(path=>installed.has(path))){
+   const rows=(await client.query('SELECT path,sha256 FROM schema_migration_history WHERE path=ANY($1)',[v12Paths])).rows;
+   if(rows.length!==3||rows.some(row=>!row.sha256))throw new Error('combined_history_invalid');
+   const tables=(await client.query("SELECT relname,relrowsecurity,relforcerowsecurity FROM pg_class WHERE relname IN ('external_live_tenants','owner_usage_daily')")).rows;
+   if(tables.length!==2||tables.some(row=>!row.relrowsecurity||!row.relforcerowsecurity))throw new Error('combined_rls_invalid');
+   console.log('PASS existing V12/V13 migration history and FORCE RLS on disposable PostgreSQL');return;
+  }
+  if(v12Paths.some(path=>installed.has(path)))throw new Error('partial_v12_history');
   for(const path of v12Paths){
    const sql=execFileSync('git',['show',`${v12Commit}:${path}`],{encoding:'utf8'});
    const hash=createHash('sha256').update(sql).digest('hex');
