@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import {randomBytes} from 'node:crypto';
+import {createHmac,randomBytes} from 'node:crypto';
 import {Pool} from 'pg';
 import test from 'node:test';
 import {assertTestTarget} from '../lib/migration-manifest';
 import {rotateOaCredentials,resolveLoginOa,resolveWebhookOa} from '../lib/owner/credential-store';
+import {handleScopedWebhook} from '../lib/line/scoped-webhook';
 
 const raw=process.env.MIGRATION_TEST_DATABASE_URL;
 test('owner rotation commits per OA, rejects wrong bot and keeps audit', {skip:!raw},async()=>{
@@ -27,8 +28,18 @@ test('owner rotation commits per OA, rejects wrong bot and keeps audit', {skip:!
   assert.notEqual(a,b);assert.notEqual((await resolveWebhookOa(pool,a))?.accessToken,(await resolveWebhookOa(pool,b))?.accessToken);
   assert.equal((await resolveLoginOa(pool,a))?.oaId,ids[0]);assert.equal((await resolveLoginOa(pool,b))?.oaId,ids[1]);
   assert.equal(await resolveLoginOa(pool,'invalid-key'),null);
+  const eventId=randomBytes(12).toString('hex');
+  const body=JSON.stringify({events:[{webhookEventId:eventId,type:'follow',source:{type:'user',userId:'synthetic-user'}}]});
+  const signed=(secret:string,payload=body)=>new Request('https://staging.invalid/api/line/webhook/'+a,{method:'POST',headers:{'content-type':'application/json','x-line-signature':createHmac('sha256',secret).update(payload).digest('base64')},body:payload});
+  assert.equal((await handleScopedWebhook(pool,a,signed('msg-secret-b'))).status,401);
+  assert.equal((await handleScopedWebhook(pool,a,signed('msg-secret-a'))).status,200);
+  assert.equal((await handleScopedWebhook(pool,a,signed('msg-secret-a'))).status,200);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM oa_line_webhook_receipts WHERE oa_id=$1 AND event_id=$2',[ids[0],eventId])).rows[0].n,1);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM oa_line_webhook_receipts WHERE oa_id=$1 AND event_id=$2',[ids[1],eventId])).rows[0].n,0);
+  const postback=JSON.stringify({events:[{webhookEventId:randomBytes(12).toString('hex'),type:'postback',source:{type:'user',userId:'synthetic-user'},postback:{data:'topup:v2:approve:synthetic'}}]});
+  assert.equal((await handleScopedWebhook(pool,a,signed('msg-secret-a',postback))).status,503);
  }finally{
-  if(ids.length){await pool.query('DELETE FROM oa_credential_audit WHERE oa_id=ANY($1::uuid[])',[ids]);await pool.query('DELETE FROM oa_credentials WHERE oa_id=ANY($1::uuid[])',[ids]);await pool.query('DELETE FROM oa_service_control WHERE id=ANY($1::uuid[])',[ids])}
+  if(ids.length){await pool.query('DELETE FROM oa_line_webhook_receipts WHERE oa_id=ANY($1::uuid[])',[ids]);await pool.query('DELETE FROM oa_credential_audit WHERE oa_id=ANY($1::uuid[])',[ids]);await pool.query('DELETE FROM oa_credentials WHERE oa_id=ANY($1::uuid[])',[ids]);await pool.query('DELETE FROM oa_service_control WHERE id=ANY($1::uuid[])',[ids])}
   await pool.end();if(old===undefined)delete process.env.OA_CREDENTIAL_ENCRYPTION_KEY;else process.env.OA_CREDENTIAL_ENCRYPTION_KEY=old;
  }
 });
