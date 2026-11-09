@@ -38,6 +38,7 @@ export async function dispatchTopupLine(pool:Pool,opts:{token?:string;fetch?:typ
  const rows=await scoped(pool,async c=>(await c.query<QueueRow>(`
  WITH candidate AS (
    SELECT n.id FROM member_topup_line_notifications n
+   JOIN member_topup_requests r ON r.id=n.request_id AND r.oa_id IS NULL
    WHERE (
      (n.status IN ('PENDING','RETRY') AND n.next_attempt_at<=now())
      OR (n.status='PROCESSING' AND n.lease_until<now())

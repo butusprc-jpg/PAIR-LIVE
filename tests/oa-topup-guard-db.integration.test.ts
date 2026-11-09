@@ -24,8 +24,12 @@ test('two OA approvals roll back cross-tenant credits and replay once', {skip:!r
   }
   const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Synthetic B',100) RETURNING id")).rows[0].id;
   await db.query("INSERT INTO member_identities(member_id,provider,provider_channel_id,provider_user_id) VALUES($1,'line',$2,$3)",[member,channels[1],'U'+'c'.repeat(32)]);
-  async function request(points:number){const c=await db!.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const row=(await c.query('INSERT INTO member_topup_requests(member_id,requested_points,idempotency_key,oa_id) VALUES($1,$2,$3,$4) RETURNING id',[member,points,randomUUID(),oaIds[1]])).rows[0];await c.query('COMMIT');return row.id as string}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}
+  async function request(points:number,oa:string|null=oaIds[1]){const c=await db!.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const row=(await c.query('INSERT INTO member_topup_requests(member_id,requested_points,idempotency_key,oa_id) VALUES($1,$2,$3,$4) RETURNING id',[member,points,randomUUID(),oa])).rows[0];await c.query('COMMIT');return row.id as string}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}
   const approval=await request(50);
+  assert.equal((await db.query('SELECT oa_id FROM member_topup_requests WHERE id=$1',[approval])).rows[0].oa_id,oaIds[1]);
+  const bound=await request(1,null);
+  assert.equal((await db.query('SELECT oa_id FROM member_topup_requests WHERE id=$1',[bound])).rows[0].oa_id,oaIds[1]);
+  await assert.rejects(request(1,oaIds[0]),/oa_member_mismatch/);
   await assert.rejects(decideTopup(db,adminIds[0],approval,'APPROVED','synthetic'),/oa_decision_forbidden/);
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[member])).rows[0].demo_points,100);
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[approval])).rows[0].n,0);
