@@ -1,12 +1,16 @@
 import {Pool} from 'pg';
 import {expectedTables} from '../lib/schema-tables';
 import {assertTestTarget,migrationManifest,assertMigrationOrder,assertNoLegacyV13History} from '../lib/migration-manifest';
+import {assertRailwayStagingTarget} from '../lib/server/staging-target';
 async function main(){
 const mode=process.argv[2];
-if(!['--dry-run','--validate','--apply'].includes(mode)){console.error('usage: npm run db:migrate -- --dry-run|--validate|--apply (isolated local test DB only)');process.exit(2)}
-const url=assertTestTarget(process.env.MIGRATION_TEST_DATABASE_URL);
+const staging=mode==='--staging-apply'||mode==='--staging-validate';
+if(!['--dry-run','--validate','--apply','--staging-apply','--staging-validate'].includes(mode)){console.error('usage: npm run db:migrate -- --dry-run|--validate|--apply|--staging-apply|--staging-validate');process.exit(2)}
+const url=staging?assertRailwayStagingTarget(process.env):assertTestTarget(process.env.MIGRATION_TEST_DATABASE_URL);
 const manifest=await migrationManifest();
-const pool=new Pool({connectionString:url,ssl:false,max:2});
+// Railway's isolated PostgreSQL template uses a self-signed certificate on
+// the private network. Never reuse this exception for production or CI URLs.
+const pool=new Pool({connectionString:url,ssl:staging?{rejectUnauthorized:false}:false,max:2});
 try{const client=await pool.connect();try{
  await client.query('SELECT pg_advisory_lock(728341, 1)');
  try{
@@ -19,8 +23,8 @@ try{const client=await pool.connect();try{
   for(const item of manifest){const hash=installed.get(item.path);if(hash&&hash!==item.sha256)throw new Error(`migration_hash_mismatch: ${item.path}`)}
   assertMigrationOrder(manifest.map(m=>m.path),new Set(installed.keys()));
   const gap=manifest.some(item=>!installed.has(item.path));
-  if(mode==='--validate'&&gap)throw new Error('pending_migrations');
-  if(mode==='--apply'){
+  if((mode==='--validate'||mode==='--staging-validate')&&gap)throw new Error('pending_migrations');
+  if(mode==='--apply'||mode==='--staging-apply'){
    if(!found.rows[0].name){const existing=await client.query("SELECT count(*)::int AS count FROM pg_tables WHERE schemaname='public'");if(existing.rows[0].count!==0)throw new Error('untracked_existing_tables');await client.query('CREATE TABLE schema_migration_history(path text PRIMARY KEY,sha256 char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())')}
    for(const item of manifest){if(installed.has(item.path)){console.log(`SKIP ${item.path} ${item.sha256}`);continue}await client.query('BEGIN');try{await client.query(item.sql.replace(/^BEGIN;\s*$/gm,'').replace(/^COMMIT;\s*$/gm,''));await client.query('INSERT INTO schema_migration_history(path,sha256) VALUES($1,$2)',[item.path,item.sha256]);await client.query('COMMIT');console.log(`APPLIED ${item.path} ${item.sha256}`)}catch(error){await client.query('ROLLBACK');throw error}}
   }else for(const item of manifest)console.log(`${installed.has(item.path)?'INSTALLED':'PENDING'} ${item.path} ${item.sha256}`);
