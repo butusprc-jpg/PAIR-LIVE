@@ -6,7 +6,7 @@ import {verifyConnectedBot} from './verify-bot';
 
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type Input={loginChannelId:string;messagingChannelId:string;liffId:string;loginSecret:string;messagingSecret:string;accessToken:string};
-function valid(input:Input){return Object.values(input).every(v=>typeof v==='string'&&v.length>=1&&v.length<=1024)&&input.loginChannelId!==input.messagingChannelId&&input.liffId.length<=255&&input.loginChannelId.length<=255&&input.messagingChannelId.length<=255}
+function valid(input:Input){return !!input&&typeof input==='object'&&(['loginChannelId','messagingChannelId','liffId','loginSecret','messagingSecret','accessToken'] as const).every(k=>typeof input[k]==='string'&&input[k].length>=1&&input[k].length<=1024)&&input.loginChannelId!==input.messagingChannelId&&input.liffId.length<=255&&input.loginChannelId.length<=255&&input.messagingChannelId.length<=255}
 export async function rotateOaCredentials(db:Pool,oaId:string,actor:string,input:Input,verifyBot=verifyConnectedBot){
  if(!uuid.test(oaId)||typeof actor!=='string'||!actor||!valid(input))throw new OwnerError('oa_credential_invalid',400);
  const c=await db.connect();try{
