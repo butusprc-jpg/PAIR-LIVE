@@ -40,6 +40,7 @@ export const migrationPaths=[
  'migrations/033_line_shopping_live.sql',
  'migrations/034_vdo_ninja_tenants.sql',
  'migrations/035_vdo_remote_control.sql',
+ 'migrations/036_member_remember_session.sql',
 ] as const;
 export function assertUniqueMigrationNumbers(paths:readonly string[]){
  const seen=new Map<string,string>(),filenames=new Set<string>();

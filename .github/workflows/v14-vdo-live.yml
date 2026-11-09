@@ -3,7 +3,7 @@ on:
   push:
     branches: [feat/pair-live-v14-3-remote-control, feat/pair-live-v14-5-ci-low-api-traffic]
   pull_request:
-    branches: [feat/pair-live-v14-5-ci-low-api-traffic]
+    branches: [feat/pair-live-v14-5-ci-low-api-traffic, feat/pair-live-v14-6-liff-session-performance]
   workflow_dispatch:
 permissions:
   contents: read

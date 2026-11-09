@@ -33,3 +33,19 @@ test('member backup poll budget is lower than the former 3s and 4s loops',()=>{
  const active=2*(1+Math.floor(600_000/pollDelay(true)));
  assert.deepEqual({old,idle,active},{old:352,idle:22,active:50});
 });
+test('transaction wake during an in-flight poll refreshes once immediately',async()=>{
+ const listeners=new Map<string,Set<()=>void>>();
+ const add=(name:string,fn:()=>void)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name)!.add(fn)};
+ const remove=(name:string,fn:()=>void)=>listeners.get(name)?.delete(fn);
+ const oldDoc=globalThis.document,oldWindow=globalThis.window;
+ Object.defineProperty(globalThis,'document',{configurable:true,value:{visibilityState:'visible',addEventListener:add,removeEventListener:remove}});
+ Object.defineProperty(globalThis,'window',{configurable:true,value:{addEventListener:add,removeEventListener:remove}});
+ let release:()=>void=()=>{},calls=0;
+ try{
+  const stop=adaptivePoll(async()=>{calls++;if(calls===1)await new Promise<void>(resolve=>{release=resolve});return false},{onEvent:'changed'});
+  assert.equal(calls,1);
+  listeners.get('changed')?.forEach(fn=>fn());listeners.get('changed')?.forEach(fn=>fn());assert.equal(calls,1);
+  release();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,2);
+  stop();
+ }finally{Object.defineProperty(globalThis,'document',{configurable:true,value:oldDoc});Object.defineProperty(globalThis,'window',{configurable:true,value:oldWindow})}
+});
