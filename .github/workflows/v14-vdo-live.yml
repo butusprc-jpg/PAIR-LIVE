@@ -1,7 +1,7 @@
-name: V14 VDO LIVE
+name: V14.3 VDO remote control
 on:
   push:
-    branches: [feat/pair-live-v14-2-vdo-ninja]
+    branches: [feat/pair-live-v14-3-remote-control]
   workflow_dispatch:
 permissions:
   contents: read
