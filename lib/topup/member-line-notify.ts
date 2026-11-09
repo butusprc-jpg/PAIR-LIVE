@@ -40,10 +40,11 @@ export async function dispatchApprovedMemberLine(pool:Pool,opts:{fetch?:typeof f
    WHERE (status IN ('PENDING','RETRY') AND created_at<now()-interval '23 hours')
       OR (status='PROCESSING' AND lease_until<now() AND (attempts>=5 OR created_at<now()-interval '23 hours'))`);
   return (await c.query<QueueRow>(`WITH candidate AS (
-   SELECT request_id FROM member_topup_member_notifications
-   WHERE ((status IN ('PENDING','RETRY') AND next_attempt_at<=now()) OR (status='PROCESSING' AND lease_until<now()))
-   AND attempts<5 AND created_at>now()-interval '23 hours' AND recipient_user_id IS NOT NULL
-   ORDER BY created_at,request_id FOR UPDATE SKIP LOCKED LIMIT 10
+   SELECT n.request_id FROM member_topup_member_notifications n
+   JOIN member_topup_requests r ON r.id=n.request_id AND r.oa_id IS NULL
+   WHERE ((n.status IN ('PENDING','RETRY') AND n.next_attempt_at<=now()) OR (n.status='PROCESSING' AND n.lease_until<now()))
+   AND n.attempts<5 AND n.created_at>now()-interval '23 hours' AND n.recipient_user_id IS NOT NULL
+   ORDER BY n.created_at,n.request_id FOR UPDATE OF n SKIP LOCKED LIMIT 10
   ) UPDATE member_topup_member_notifications n SET status='PROCESSING',attempts=n.attempts+1,
     lease_until=now()+interval '40 seconds',updated_at=now()
     FROM candidate WHERE n.request_id=candidate.request_id

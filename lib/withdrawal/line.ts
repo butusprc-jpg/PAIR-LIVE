@@ -27,11 +27,12 @@ export function withdrawalCard(row:{request_id:string;display_name:string;reques
 export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch}={}){
  const rows=await scoped(pool,async c=>(await c.query<QueueRow>(`
   WITH candidate AS (
-   SELECT id FROM member_withdrawal_line_outbox
-   WHERE ((status IN ('PENDING','RETRY') AND next_attempt_at<=now())
-     OR (status='PROCESSING' AND lease_until<now()))
-   AND attempts<5
-   ORDER BY next_attempt_at,id FOR UPDATE SKIP LOCKED LIMIT 10
+   SELECT o.id FROM member_withdrawal_line_outbox o
+   JOIN member_withdrawal_requests r ON r.id=o.request_id AND r.oa_id IS NULL
+   WHERE ((o.status IN ('PENDING','RETRY') AND o.next_attempt_at<=now())
+     OR (o.status='PROCESSING' AND o.lease_until<now()))
+   AND o.attempts<5
+   ORDER BY o.next_attempt_at,o.id FOR UPDATE OF o SKIP LOCKED LIMIT 10
   )
   UPDATE member_withdrawal_line_outbox o
   SET status='PROCESSING',attempts=o.attempts+1,lease_until=now()+interval '40 seconds'

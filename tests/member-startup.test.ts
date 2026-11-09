@@ -23,3 +23,10 @@ test('session outage and malformed success fail closed without entering login',a
   await assert.rejects(memberStartup(fetcher),/member_session_unavailable/);assert.equal(calls,1);
  }
 });
+
+test('scoped login checks the selected OA session and fetches its runtime LIFF',async()=>{
+ const calls:string[]=[];const key='synthetic-oa-key';
+ const fetcher=(async(url:string)=>{calls.push(url);return url.includes('/session')?Response.json({error:'oa_session_mismatch'},{status:401}):Response.json({lineConfigured:true,wechatConfigured:false,liffId:'liff-B',oaKey:key})}) as typeof fetch;
+ assert.deepEqual(await memberStartup(fetcher,key),{kind:'login',runtime:{lineConfigured:true,wechatConfigured:false,liffId:'liff-B',oaKey:key}});
+ assert.deepEqual(calls,['/api/auth/session?oa=synthetic-oa-key','/api/auth/runtime?oa=synthetic-oa-key']);
+});
