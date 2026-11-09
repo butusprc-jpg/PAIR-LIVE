@@ -32,3 +32,10 @@ export async function resolveWebhookOa(db:Pool,webhookKey:string){
  if(r.rowCount!==1)return null;const row=r.rows[0];
  return {oaId:row.oa_id as string,channelId:row.messaging_channel_id as string,keyVersion:Number(row.key_version),channelSecret:decryptOaSecret(row.oa_id,'messaging-secret',row.messaging_secret_ciphertext),accessToken:decryptOaSecret(row.oa_id,'access-token',row.access_token_ciphertext)};
 }
+export async function resolveLoginOa(db:Pool,webhookKey:string){
+ if(!/^[A-Za-z0-9_-]{32,128}$/.test(webhookKey))return null;
+ const r=await db.query(`SELECT c.oa_id,c.login_channel_id,c.liff_id FROM oa_credentials c JOIN oa_service_control o ON o.id=c.oa_id
+  WHERE c.webhook_key=$1 AND o.enabled=true AND o.paused=false AND o.deleted_at IS NULL AND o.expires_at>now()`,[webhookKey]);
+ if(r.rowCount!==1)return null;
+ return {oaId:r.rows[0].oa_id as string,loginChannelId:r.rows[0].login_channel_id as string,liffId:r.rows[0].liff_id as string};
+}

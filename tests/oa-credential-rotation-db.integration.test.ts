@@ -3,7 +3,7 @@ import {randomBytes} from 'node:crypto';
 import {Pool} from 'pg';
 import test from 'node:test';
 import {assertTestTarget} from '../lib/migration-manifest';
-import {rotateOaCredentials,resolveWebhookOa} from '../lib/owner/credential-store';
+import {rotateOaCredentials,resolveLoginOa,resolveWebhookOa} from '../lib/owner/credential-store';
 
 const raw=process.env.MIGRATION_TEST_DATABASE_URL;
 test('owner rotation commits per OA, rejects wrong bot and keeps audit', {skip:!raw},async()=>{
@@ -25,6 +25,8 @@ test('owner rotation commits per OA, rejects wrong bot and keeps audit', {skip:!
   const a=(await pool.query('SELECT webhook_key FROM oa_credentials WHERE oa_id=$1',[ids[0]])).rows[0].webhook_key;
   const b=(await pool.query('SELECT webhook_key FROM oa_credentials WHERE oa_id=$1',[ids[1]])).rows[0].webhook_key;
   assert.notEqual(a,b);assert.notEqual((await resolveWebhookOa(pool,a))?.accessToken,(await resolveWebhookOa(pool,b))?.accessToken);
+  assert.equal((await resolveLoginOa(pool,a))?.oaId,ids[0]);assert.equal((await resolveLoginOa(pool,b))?.oaId,ids[1]);
+  assert.equal(await resolveLoginOa(pool,'invalid-key'),null);
  }finally{
   if(ids.length){await pool.query('DELETE FROM oa_credential_audit WHERE oa_id=ANY($1::uuid[])',[ids]);await pool.query('DELETE FROM oa_credentials WHERE oa_id=ANY($1::uuid[])',[ids]);await pool.query('DELETE FROM oa_service_control WHERE id=ANY($1::uuid[])',[ids])}
   await pool.end();if(old===undefined)delete process.env.OA_CREDENTIAL_ENCRYPTION_KEY;else process.env.OA_CREDENTIAL_ENCRYPTION_KEY=old;
