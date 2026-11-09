@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {validatedViewerUrl} from '../client/VdoViewer';
+test('viewer iframe accepts only the exact VDO.Ninja view URL',()=>{assert.equal(validatedViewerUrl('https://vdo.ninja/?view=UzsGTCK'),'https://vdo.ninja/?view=UzsGTCK');for(const url of ['https://vdo.ninja/?push=UzsGTCK','https://vdo.ninja.evil.test/?view=UzsGTCK','javascript:alert(1)','https://vdo.ninja/?view=UzsGTCK&push=x','http://vdo.ninja/?view=UzsGTCK'])assert.equal(validatedViewerUrl(url),null)});
