@@ -4,6 +4,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY lib ./lib
+COPY modules ./modules
 COPY scripts ./scripts
 COPY migrations ./migrations
 ENV NODE_ENV=production
