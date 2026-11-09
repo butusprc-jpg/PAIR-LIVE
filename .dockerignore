@@ -1,0 +1,9 @@
+.git
+.next
+node_modules
+*.tsbuildinfo
+.env*
+screenshots
+docs
+tests
+.github
