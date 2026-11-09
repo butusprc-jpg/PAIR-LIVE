@@ -1,0 +1,75 @@
+name: V14.8 Railway migration verification
+on:
+  pull_request:
+    branches: [feat/pair-live-v14-7-performance-stability]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      TOPUP_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      WALLET_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      VDO_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      OWNER_USAGE_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y imagemagick tesseract-ocr
+      - run: npm ci
+      - run: npm run db:migrate -- --apply
+      - run: npm run db:migrate -- --validate
+      - run: npm test
+      - name: Synthetic OA round integration
+        env:
+          DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+        run: node --import tsx scripts/test-round-ci.ts
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - name: Build production Railway image
+        run: docker build -f Dockerfile.railway-web -t pair-live-railway:test .
+      - name: Health check with isolated PostgreSQL
+        run: |
+          started=$(date +%s%3N)
+          docker run -d --name pair-live-web-test --network host \
+            -e PORT=3108 \
+            -e DATABASE_URL="$MIGRATION_TEST_DATABASE_URL" \
+            pair-live-railway:test
+          trap 'docker rm -f pair-live-web-test >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 60); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3108/api/health/ready || true)
+            if [ "$status" = 200 ]; then break; fi
+            sleep 1
+          done
+          test "$status" = 200
+          curl -fsS http://127.0.0.1:3108/api/health/ready | node -e "let s='';process.stdin.on('data',x=>s+=x).on('end',()=>{if(JSON.parse(s).status!=='ready')process.exit(1)})"
+          echo "CI Docker cold start to ready: $(( $(date +%s%3N) - started )) ms"
+          echo 'CI Docker memory/CPU snapshot:'
+          docker stats --no-stream --format '{{.MemUsage}} {{.CPUPerc}}' pair-live-web-test
+          curl -fsS -o /dev/null -w 'CI health response: %{time_total}s\n' http://127.0.0.1:3108/api/health/ready
+          docker run -d --name pair-live-no-db --network host -e PORT=3109 pair-live-railway:test
+          trap 'docker rm -f pair-live-web-test pair-live-no-db >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            failed_status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3109/api/health/ready || true)
+            if [ "$failed_status" = 503 ]; then break; fi
+            sleep 1
+          done
+          test "$failed_status" = 503
