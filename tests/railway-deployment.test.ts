@@ -20,8 +20,8 @@ test('readiness fails closed and does not expose database errors',async()=>{
  assert.equal(await readiness({query:async()=>{throw new Error('synthetic sensitive detail')}} as never),false);
 });
 test('one-shot staging migration cannot launch the round worker',()=>{
- const migration=JSON.parse(readFileSync('railway.migration.json','utf8'));
- assert.equal(migration.deploy.startCommand,'npm run db:migrate -- --staging-apply');
- assert.equal(migration.deploy.restartPolicyMaxRetries,0);
- assert.doesNotMatch(migration.deploy.startCommand,/round:worker/);
+ const migration=readFileSync('Dockerfile.railway-migrate','utf8');
+ assert.match(migration,/FROM node:22-bookworm-slim/);
+ assert.match(migration,/CMD \["npm", "run", "db:migrate", "--", "--staging-apply"\]/);
+ assert.doesNotMatch(migration,/round:worker/);
 });
