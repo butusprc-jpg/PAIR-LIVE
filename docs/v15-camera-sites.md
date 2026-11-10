@@ -1,0 +1,8 @@
+# V15 camera sites (staging)
+
+- Migration `040_camera_sites.sql` adds one site per OA, four permanent camera slots, and a nullable `rounds.site_id` for future site-specific rounds. Existing rounds are not assigned a site or changed. Legacy VDO.Ninja slot 1 keeps its existing control and visibility state.
+- Admin Camera tab manages site/country, names, and slots 2–4. Member `/api/live/cameras` only returns enabled VDO.Ninja viewer links. `/api/admin/cameras` requires server admin session and CSRF for changes; other tenants cannot be selected in request data.
+- Slots 2–4 use independent VDO.Ninja stream IDs. `เตรียม Publisher` creates a random stream ID and exposes its publisher link only to an authenticated admin. `แสดงให้สมาชิก` toggles visibility; it does not prove that a remote camera is sending frames. The viewer itself reports `CONNECTING` until decoded frames are observed. The publisher must be stopped in its own window.
+- RTSP Gateway and IP Camera are reserved source types and remain `NOT_CONFIGURED`. No RTSP URL, password, or arbitrary host is accepted or returned by the API. A trusted media gateway with private credential storage, SSRF controls, and playlist/segment authorization must be built and tested before those source types can be enabled.
+- Member polling updates labels and visibility without a page reload, at 25 seconds while visible and active or 60 seconds while idle. It is not instantaneous across different devices. No simultaneous multi-site betting or settlement is enabled.
+- Install migration on an isolated test database first. Railway staging requires `--staging-apply` under its guarded target before deploying the new Web image. Do not apply this migration to Production from this branch.

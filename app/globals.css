@@ -56,6 +56,8 @@ main:has(.member-transfer){padding-bottom:calc(120px + env(safe-area-inset-botto
 .camera-preview:fullscreen{width:100vw;height:100vh;max-width:none;aspect-ratio:auto;margin:0;border-radius:0}
 .member-camera-card .video:fullscreen{width:100vw;height:100vh;max-width:none;aspect-ratio:auto;margin:0}
 .stream-clock{padding-top:10px;text-align:right;color:#91a0ba;font-size:13px}
+.camera-grid{display:grid;gap:12px;min-width:0}.camera-grid-double,.camera-grid-featured,.camera-grid-quad{grid-template-columns:repeat(2,minmax(0,1fr))}.camera-grid-featured .camera-tile:first-child{grid-row:span 2}.camera-tile{min-width:0}.camera-tile h3{font-size:16px;margin:0 0 8px}.camera-grid .external-live-frame{min-width:0}.camera-admin-list{display:grid;gap:14px;margin-top:18px}.camera-admin-row{border:1px solid #40516a;border-radius:12px;padding:14px;display:grid;gap:10px}.camera-admin-row h3{margin:0;font-size:16px}.camera-admin-actions,.camera-site-settings{display:flex;flex-wrap:wrap;gap:10px;align-items:end}.camera-site-settings label,.camera-admin-row label{min-width:min(100%,190px);flex:1}.camera-admin-row label{display:block}.camera-admin-actions button{min-height:44px}
+@media(max-width:600px){.camera-grid-featured,.camera-grid-double,.camera-grid-quad{grid-template-columns:1fr}.camera-grid-featured .camera-tile:first-child{grid-row:auto}.camera-site-settings label,.camera-admin-row label{flex-basis:100%}}
 .member-transfer-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding-top:12px}
 .member-transfer-actions button{min-height:48px;border:0;border-radius:12px;color:#fff;font:inherit;font-weight:800}
 .member-transfer-topup{background:#16834a}.member-transfer-withdraw{background:#2563eb}
