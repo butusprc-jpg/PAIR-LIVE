@@ -22,7 +22,8 @@ test('V15 four cameras retain stable IDs, isolate OA, enforce RLS, and reject sl
   await assert.rejects(configureCamera(db,'camera-channel-A','admin-a',{cameraId:camera.cameraId,revision:named.cameras[1].revision,name:'again',action:'start'}),/camera_conflict/);
   for(const item of started.cameras.slice(2)){const configured=await configureCamera(db,'camera-channel-A','admin-a',{cameraId:item.cameraId,revision:item.revision,name:item.name,sourceKind:'VDO_NINJA',streamId:`synthetic_camera_${item.slot}`,action:'save'});await configureCamera(db,'camera-channel-A','admin-a',{cameraId:item.cameraId,revision:configured.cameras[item.slot-1].revision,name:item.name,action:'start'})}
   assert.equal((await readCameraSite(db,'camera-channel-A')).layout,'featured');
-  await db.query('UPDATE site_cameras SET stream_id=$2 WHERE oa_id=$1 AND slot=1',[''+ids[0],'synthetic_camera_1']);await db.query('INSERT INTO vdo_ninja_tenants(oa_id,stream_id,display_enabled) VALUES($1,$2,true)',[ids[0],'synthetic_camera_1']);
+  // Legacy publisher can be provisioned after the site was created; slot 1 follows its live state.
+  await db.query('INSERT INTO vdo_ninja_tenants(oa_id,stream_id,display_enabled) VALUES($1,$2,true)',[ids[0],'synthetic_camera_1']);
   assert.equal((await readCameraSite(db,'camera-channel-A')).layout,'quad');
   await assert.rejects(db.query('INSERT INTO site_cameras(site_id,oa_id,slot,name) VALUES($1,$2,5,$3)',[first.site?.siteId,ids[0],'fifth']),/site_cameras_slot_check/);
   await assert.rejects(db.query('UPDATE site_cameras SET camera_id=$2 WHERE camera_id=$1',[camera.cameraId,randomUUID()]),/camera_identity_immutable/);

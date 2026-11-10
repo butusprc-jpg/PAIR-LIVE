@@ -14,8 +14,9 @@ export async function readCameraSite(db:Pool,channel:string,admin=false){
  const cameras=site?(await db.query<Camera>('SELECT * FROM site_cameras WHERE site_id=$1 ORDER BY slot',[site.site_id])).rows:[];
  const legacy=(await db.query<{stream_id:string;display_enabled:boolean}>('SELECT stream_id,display_enabled FROM vdo_ninja_tenants WHERE oa_id=$1',[tenant.id])).rows[0];
  const list=cameras.map(row=>{
-  const enabled=tenant.active&&row.source_kind==='VDO_NINJA'&&!!row.stream_id&&(row.slot===1?!!legacy?.display_enabled:row.display_enabled);
-  return {...publicCamera(row,!!enabled),viewerUrl:enabled?viewerUrl(row.slot===1?legacy!.stream_id:row.stream_id!):null};
+  const effective=row.slot===1&&legacy?{...row,stream_id:legacy.stream_id}:row;
+  const enabled=tenant.active&&effective.source_kind==='VDO_NINJA'&&!!effective.stream_id&&(row.slot===1?!!legacy?.display_enabled:row.display_enabled);
+  return publicCamera(effective,!!enabled);
  });
  const visible=list.filter(x=>x.displayEnabled);
  return {site:site?{siteId:site.site_id,name:site.name,country:site.country}:null,cameras:admin?list.map(x=>({...x,publisherUrl:x.slot!==1&&x.sourceKind==='VDO_NINJA'&&cameras.find(c=>c.camera_id===x.cameraId)?.stream_id?`https://vdo.ninja/?push=${encodeURIComponent(cameras.find(c=>c.camera_id===x.cameraId)!.stream_id!)}`:null})):visible,layout:cameraLayout(visible.length)};
