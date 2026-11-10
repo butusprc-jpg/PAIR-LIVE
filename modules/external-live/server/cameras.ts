@@ -17,7 +17,8 @@ export async function readCameraSite(db:Pool,channel:string,admin=false){
   const enabled=tenant.active&&row.source_kind==='VDO_NINJA'&&!!row.stream_id&&(row.slot===1?!!legacy?.display_enabled:row.display_enabled);
   return {...publicCamera(row,!!enabled),viewerUrl:enabled?viewerUrl(row.slot===1?legacy!.stream_id:row.stream_id!):null};
  });
- return {site:site?{siteId:site.site_id,name:site.name,country:site.country}:null,cameras:admin?list.map(x=>({...x,publisherUrl:x.slot!==1&&x.sourceKind==='VDO_NINJA'&&cameras.find(c=>c.camera_id===x.cameraId)?.stream_id?`https://vdo.ninja/?push=${encodeURIComponent(cameras.find(c=>c.camera_id===x.cameraId)!.stream_id!)}`:null})):list.filter(x=>x.displayEnabled),layout:cameraLayout(admin?list.filter(x=>x.displayEnabled).length:list.length)};
+ const visible=list.filter(x=>x.displayEnabled);
+ return {site:site?{siteId:site.site_id,name:site.name,country:site.country}:null,cameras:admin?list.map(x=>({...x,publisherUrl:x.slot!==1&&x.sourceKind==='VDO_NINJA'&&cameras.find(c=>c.camera_id===x.cameraId)?.stream_id?`https://vdo.ninja/?push=${encodeURIComponent(cameras.find(c=>c.camera_id===x.cameraId)!.stream_id!)}`:null})):visible,layout:cameraLayout(visible.length)};
 }
 export async function provisionCameraSite(db:Pool,channel:string){
  const tenant=await resolveVdoTenant(db,channel);const client=await db.connect();
