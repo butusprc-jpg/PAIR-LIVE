@@ -8,6 +8,12 @@ test('Railway web and existing round worker keep separate start paths',()=>{
  const worker=JSON.parse(readFileSync('railway.json','utf8'));
  const docker=readFileSync('Dockerfile.railway-web','utf8');
  assert.equal(worker.deploy.startCommand,'npm run round:worker');
+ assert.equal(worker.build.dockerfilePath,'Dockerfile.railway-worker');
+ const workerDocker=readFileSync('Dockerfile.railway-worker','utf8');
+ assert.match(workerDocker,/RUN npm ci\n/);
+ assert.match(workerDocker,/CMD \["npm", "run", "round:worker"\]/);
+ assert.doesNotMatch(workerDocker,/--omit=dev|DATABASE_URL|CHANNEL_ACCESS_TOKEN/);
+ assert.match(readFileSync('scripts/round-worker.ts','utf8'),/RAILWAY_STAGING_NO_LINE==='true'\)throw new Error\('round_worker_staging_gate_closed'\)/);
  assert.equal(web.build.dockerfilePath,'Dockerfile.railway-web');
  assert.equal(web.deploy.healthcheckPath,'/api/health/ready');
  assert.equal(web.deploy.numReplicas,1);

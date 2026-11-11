@@ -16,6 +16,28 @@ topup and withdrawal use the existing `members.demo_points` transaction path.
 - Production Neon has migrations through `031_owner_usage_metrics.sql`; source
   also contains 032–036 and 040. Review the dependencies and apply them via a
   separately approved migration plan before pointing the new runtime at Neon.
+- The read-only SQL in `docs/railway-neon-migration-review.sql` confirms the
+  selected database and migration history. The six existing SQL files are the
+  apply inputs, in manifest order: 032 adds VDO state; 033 adds LINE SHOPPING
+  tables; 034 adds OA-bound VDO tables and RLS; 035 extends those VDO tables;
+  036 adds member session rotation columns; 040 adds camera sites and a nullable
+  `rounds.site_id`, backfilling camera rows from VDO tenants. Their source
+  SHA-256 hashes are:
+
+  | Migration | SHA-256 |
+  | --- | --- |
+  | 032 | `4590eac8e3b75a79da83dc3fa1502195360dd19b49e071f63ac78e178fd0e932` |
+  | 033 | `f72bbf83fdfe46c6248a0f7fe1f01b3f61059e568a8b26eb30270b1b4ae6863b` |
+  | 034 | `0c1bbfa9fd85e2e22df7b1bf2dad19652c2547572f86ef0c514b200be5ecae8a` |
+  | 035 | `da36a651e1d1efa7631d943602d24136ab0db5bbcadd8ec574770dd8de06239c` |
+  | 036 | `4af7501dd238b779a6258525317418d8c02a7df3f8444699f0088e9f19e8fe8f` |
+  | 040 | `ae110e8fcdef0439e7186119ef09667e60d810fd3bd513ab9088293200b0ae1b` |
+
+  Apply each file and its history insert in one transaction with a dedicated
+  advisory lock, comparing all installed hashes first. A failed transaction
+  rolls back that file. After commit, roll back the application to its prior
+  commit while keeping compatible additive schema; never delete migration
+  history, camera rows, members, ledger or points as a rollback shortcut.
 - Railway variable names are visible, but their values have not been verified
   against the Neon branch and LINE OA. The Vercel project environment and LINE
   Console settings also need an authorized read-only comparison.
