@@ -49,3 +49,5 @@ test('transaction wake during an in-flight poll refreshes once immediately',asyn
   stop();
  }finally{Object.defineProperty(globalThis,'document',{configurable:true,value:oldDoc});Object.defineProperty(globalThis,'window',{configurable:true,value:oldWindow})}
 });
+
+test('LIVE polling checks active video every 5s and idle every 15s',()=>{assert.equal(pollDelay(true,true),5_000);assert.equal(pollDelay(false,true),15_000);assert.equal(pollDelay(true),25_000);assert.equal(pollDelay(false),60_000)});
