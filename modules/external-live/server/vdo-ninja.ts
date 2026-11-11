@@ -16,3 +16,29 @@ async function audit(client:PoolClient,tenantId:string,actor:string,action:'CONN
 export async function memberVdoLive(db:Pool,channelId:string){const tenant=await resolveVdoTenant(db,channelId);const row=(await db.query<Row>(`SELECT ${columns} FROM vdo_ninja_tenants WHERE oa_id=$1`,[tenant.id])).rows[0]||null;return memberState(row,tenant)}
 export async function adminVdoLive(db:Pool,channelId:string,provision=true,transport?:RemoteTransport){const tenant=await resolveVdoTenant(db,channelId);if(!provision){const row=(await db.query<Row>(`SELECT ${columns} FROM vdo_ninja_tenants WHERE oa_id=$1`,[tenant.id])).rows[0]||null;if(!row)throw new LiveError('live_configuration_missing',503);return adminState(row,tenant,transport)}const client=await db.connect();let row:Row;try{await client.query('BEGIN');await client.query(`INSERT INTO vdo_ninja_tenants(oa_id,stream_id) VALUES($1,$2) ON CONFLICT(oa_id) DO NOTHING`,[tenant.id,randomBytes(18).toString('base64url')]);row=(await client.query<Row>(`SELECT ${columns} FROM vdo_ninja_tenants WHERE oa_id=$1`,[tenant.id])).rows[0];await client.query('COMMIT')}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}return adminState(row,tenant,transport)}
 export async function changeVdoLive(db:Pool,channelId:string,action:'connect'|'start'|'stop',revision:number,actor:string,transport?:RemoteTransport){if(!Number.isSafeInteger(revision)||revision<0)throw new LiveError('invalid_revision');const tenant=await resolveVdoTenant(db,channelId);if(action!=='stop'&&!tenant.active)throw new LiveError('oa_service_inactive',403);const client:PoolClient=await db.connect();let updated:Row;let warning:string|undefined;try{await client.query('BEGIN');const previous=(await client.query<Row>(`SELECT ${columns} FROM vdo_ninja_tenants WHERE oa_id=$1 FOR UPDATE`,[tenant.id])).rows[0];if(!previous)throw new LiveError('live_configuration_missing',409);if(Number(previous.revision)!==revision)throw new LiveError('live_conflict',409);if(action==='connect'){if(previous.remote_key_ciphertext){updated=previous}else{updated=(await client.query<Row>(`UPDATE vdo_ninja_tenants SET remote_key_ciphertext=$2,revision=revision+1,updated_at=now(),updated_by=$3 WHERE oa_id=$1 RETURNING ${columns}`,[tenant.id,encryptControlKey(newControlKey()),actor])).rows[0];await audit(client,tenant.id,actor,'CONNECT',previous,updated)}}else if(action==='start'){if(!previous.remote_key_ciphertext)throw new LiveError('publisher_not_connected',409);const key=decryptControlKey(previous.remote_key_ciphertext);await setCamera(key,true,transport);const details=await readPublisher(key,previous.stream_id,transport);if(details.cameraMuted)throw new LiveError('remote_command_unconfirmed',503);if(previous.display_enabled){updated=previous}else{updated=(await client.query<Row>(`UPDATE vdo_ninja_tenants SET display_enabled=true,revision=revision+1,updated_at=now(),updated_by=$2 WHERE oa_id=$1 RETURNING ${columns}`,[tenant.id,actor])).rows[0];await audit(client,tenant.id,actor,'START',previous,updated)}}else{if(previous.remote_key_ciphertext){try{await setCamera(decryptControlKey(previous.remote_key_ciphertext),false,transport)}catch{warning='publisher_stop_unconfirmed'}}else warning='publisher_not_connected';if(previous.display_enabled){updated=(await client.query<Row>(`UPDATE vdo_ninja_tenants SET display_enabled=false,revision=revision+1,updated_at=now(),updated_by=$2 WHERE oa_id=$1 RETURNING ${columns}`,[tenant.id,actor])).rows[0];await audit(client,tenant.id,actor,'STOP',previous,updated)}else updated=previous}await client.query('COMMIT')}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}return adminState(updated,tenant,transport,warning)}
+
+
+/**
+ * Staging-only first-use setup for the single camera OA. Called exclusively after
+ * the existing LINE admin session is validated, never from member routes.
+ * Do not create/replace an OA when the owner has configured any OA already.
+ * Production and multi-OA projects retain the owner provisioning process.
+ */
+export async function ensureStagingPrimaryCameraOa(db:Pick<Pool,'query'>,channelId:string){
+ if(process.env.RAILWAY_ENVIRONMENT_NAME!=='staging'||
+    process.env.RAILWAY_SINGLE_OA_MODE!=='true'||
+    !channelId||channelId!==process.env.LINE_LOGIN_CHANNEL_ID)return;
+ const oaId=process.env.CONNECTED_LINE_OA_ID;
+ const token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
+ if(!oaId||!token)throw new LiveError('oa_configuration_missing',503);
+ const existing=await db.query('SELECT id FROM oa_service_control LIMIT 1');
+ if(existing.rows.length)return; // Never override existing owner-controlled OA.
+ const hash=createHash('sha256').update(token).digest('hex');
+ await db.query(
+  `INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,verified_token_hash,expires_at)
+   SELECT $1,'PAIR LIVE',true,$2,now()+interval '30 days'
+   WHERE NOT EXISTS (SELECT 1 FROM oa_service_control)
+   ON CONFLICT (line_oa_id) DO NOTHING`,
+  [oaId,hash]
+ );
+}
