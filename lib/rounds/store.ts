@@ -123,6 +123,53 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  return {id:inserted.rows[0].id,roundId,status:'PENDING',replayed:false,walletBalance};
  })}
 export async function roundTotals(roundId:string){const result=await database().query('SELECT even_people,even_points,odd_people,odd_points FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id()',[roundId]);const row=result.rows[0];return {even:{people:Number(row?.even_people||0),points:Number(row?.even_points||0)},odd:{people:Number(row?.odd_people||0),points:Number(row?.odd_points||0)}}}
+/** Admin action. The round lock serializes stop/cancel with entries and worker transitions. */
+export async function decideRound(adminId:string,roundId:string,action:'stop'|'cancel'){
+ if(!/^[0-9a-f-]{36}$/i.test(adminId)||!/^\d+$/.test(roundId))throw new RoundError('invalid_round_action',400);
+ return inTransaction(async client=>{
+  await client.query('SELECT pg_advisory_xact_lock(74021601)');
+  const found=await client.query('SELECT * FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id() FOR UPDATE',[roundId]);
+  const round=found.rows[0];if(!round)throw new RoundError('round_not_found',404);
+  if(action==='stop'){
+   if(round.status==='SCANNING'||round.status==='REVIEW_REQUIRED')return {status:round.status,replayed:true};
+   if(round.status!=='OPEN')throw new RoundError('round_not_open',409);
+   await client.query("UPDATE rounds SET status='SCANNING',closed_at=clock_timestamp() WHERE id=$1",[roundId]);
+   await client.query("INSERT INTO round_audit_logs(round_id,actor,action) VALUES($1,$2,'ROUND_STOPPED')",[roundId,adminId]);
+   return {status:'SCANNING',replayed:false};
+  }
+  if(round.status==='CANCELLED')return {status:'CANCELLED',replayed:true};
+  if(round.status==='SETTLED')throw new RoundError('round_already_settled',409);
+  const walletEnabled=(await walletPathFromDatabase(client))==='wallet';
+  // round_entries has FORCE RLS scoped to pair_live.member_id. Traverse members
+  // under that existing policy; never grant the admin connection unscoped access.
+  const members=await client.query('SELECT id FROM members ORDER BY id');
+  let refundedEntries=0;
+  for(const member of members.rows){
+   await client.query("SELECT set_config('pair_live.member_id',$1,true)",[member.id]);
+   const entries=await client.query("SELECT * FROM round_entries WHERE round_id=$1 AND member_id=$2 AND status='PENDING' ORDER BY id FOR UPDATE",[roundId,member.id]);
+   for(const entry of entries.rows){
+   if(walletEnabled){
+    const use=await client.query("SELECT id,points FROM member_wallet_ledger WHERE member_id=$1 AND reference_id=$2 AND type='DEMO_USE'",[entry.member_id,`ROUND_${roundId}_${entry.idempotency_key}`]);
+    if(!use.rows[0]||Number(use.rows[0].points)!==Number(entry.demo_points))throw new RoundError('original_wallet_use_missing',409);
+    const refund=await applyWalletMutationWithClient(client,{memberId:entry.member_id,type:'DEMO_REFUND',points:Number(entry.demo_points),referenceId:`ROUND_REFUND_${entry.id}`,idempotencyKey:entry.id,actor:adminId,source:'round'});
+    if(refund.replayed)throw new RoundError('refund_state_conflict',409);
+   }else{
+    const updated=await client.query('UPDATE members SET demo_points=demo_points+$1,updated_at=clock_timestamp() WHERE id=$2 RETURNING id',[entry.demo_points,entry.member_id]);
+    if(!updated.rows[0])throw new RoundError('member_unavailable',409);
+   }
+   const changed=await client.query("UPDATE round_entries SET status='CANCELLED' WHERE id=$1 AND member_id=$2 AND status='PENDING' RETURNING id",[entry.id,member.id]);
+   if(changed.rowCount!==1)throw new RoundError('refund_state_conflict',409);
+   refundedEntries++;
+   }
+  }
+  await client.query("SELECT set_config('pair_live.member_id','',true)");
+  // A missing RLS-visible row must fail closed, so a cancellation cannot strand points.
+  if(refundedEntries!==Number(round.even_people)+Number(round.odd_people))throw new RoundError('round_entries_mismatch',409);
+  await client.query("UPDATE rounds SET status='CANCELLED',closed_at=coalesce(closed_at,clock_timestamp()) WHERE id=$1",[roundId]);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_CANCELLED',jsonb_build_object('refunded_entries',$3::int))",[roundId,adminId,refundedEntries]);
+  return {status:'CANCELLED',replayed:false,refundedEntries};
+ });
+}
 export async function myRoundEntries(memberId:string){return inTransaction(async client=>{await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);const result=await client.query('SELECT e.id,e.round_id,e.side,e.demo_points,e.status,e.created_at FROM round_entries e JOIN rounds r ON r.id=e.round_id WHERE e.member_id=$1 AND r.epoch_id=current_round_epoch_id() ORDER BY e.created_at DESC LIMIT 100',[memberId]);return result.rows})}
 /** Internal-only refund path. Call after an authorized cancellation; no browser route exposes it. */
 export async function refundCancelledDemoEntry(memberId:string,entryId:string){return inTransaction(async client=>{
