@@ -13,6 +13,12 @@ topup and withdrawal use the existing `members.demo_points` transaction path.
 - The existing Railway worker service runs `db:migrate -- --staging-validate`,
   not `round:worker`. Do not start the real worker against production Neon while
   both sites might dispatch the same LINE outbox.
+- Railway reads the repository-root `railway.json` even when the Web service
+  specifies `Dockerfile.railway-web`. That root file now explicitly runs
+  `node server.js`; the future worker settings are in `railway.worker.json`.
+  Never attach the worker config file to the Web service. The failed staging
+  deployment `e5b21805-5ac8-4bcb-bf8c-e1105a53d758` exposed this mismatch;
+  its round worker was stopped by `RAILWAY_STAGING_NO_LINE` before any tick.
 - Production Neon has migrations through `031_owner_usage_metrics.sql`; source
   also contains 032–036 and 040. Review the dependencies and apply them via a
   separately approved migration plan before pointing the new runtime at Neon.

@@ -5,9 +5,13 @@ import {readiness} from '../lib/server/readiness';
 
 test('Railway web and existing round worker keep separate start paths',()=>{
  const web=JSON.parse(readFileSync('railway.web.json','utf8'));
- const worker=JSON.parse(readFileSync('railway.json','utf8'));
+ const worker=JSON.parse(readFileSync('railway.worker.json','utf8'));
+ const root=JSON.parse(readFileSync('railway.json','utf8'));
  const docker=readFileSync('Dockerfile.railway-web','utf8');
  assert.equal(worker.deploy.startCommand,'npm run round:worker');
+ assert.equal(root.deploy.startCommand,'node server.js');
+ assert.equal(root.build.dockerfilePath,'Dockerfile.railway-web');
+ assert.equal(web.deploy.startCommand,'node server.js');
  assert.equal(worker.build.dockerfilePath,'Dockerfile.railway-worker');
  const workerDocker=readFileSync('Dockerfile.railway-worker','utf8');
  assert.match(workerDocker,/RUN npm ci\n/);
