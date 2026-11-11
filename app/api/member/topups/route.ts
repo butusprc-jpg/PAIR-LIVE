@@ -3,12 +3,14 @@ import {database} from '../../../../lib/server/db';
 import {createTopup,listTopups,maximumPoints,TopupError,validatePoints,uuid} from '../../../../lib/topup/store';
 import {dispatchTopupLine,activeLineAdminRecipients} from '../../../../lib/topup/line-notify';
 import {noStore,topupFailure} from '../../../../lib/topup/http';
+import {memberAvailablePoints} from '../../../../lib/server/wallet-cutover';
+import {requireMatchingStagingWebhook} from '../../../../lib/topup/webhook-binding';
 export const runtime='nodejs';
 export async function GET(){
  try{
   const m=await currentMember();
   if(!m)return Response.json({error:'not_authenticated'},{status:401,headers:noStore});
-  return Response.json({requests:await listTopups(database(),m.id),maxPoints:maximumPoints(),memberName:m.display_name,balance:m.demo_points},{headers:noStore});
+  return Response.json({requests:await listTopups(database(),m.id),maxPoints:maximumPoints(),memberName:m.display_name,balance:await memberAvailablePoints(database(),m.id,m.demo_points)},{headers:noStore});
  }catch(e){return topupFailure(e)}
 }
 export async function POST(request:Request){
@@ -22,6 +24,7 @@ export async function POST(request:Request){
   validatePoints(points);
   const key=body.idempotencyKey;
   if(!uuid(key))throw new TopupError('invalid_idempotency_key');
+  await requireMatchingStagingWebhook();
   const record=await createTopup(database(),m.id,points,key,await activeLineAdminRecipients(database(),process.env.ADMIN_AUTH_ALLOWLIST_JSON));
   // The member's topup is committed independently of LINE availability.
   // Persisted outbox rows can be retried from the protected admin API.

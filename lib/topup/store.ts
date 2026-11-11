@@ -1,5 +1,6 @@
 import type {Pool,PoolClient} from 'pg';
 import {walletPathFromDatabase} from '../server/wallet-cutover';
+import {applyWalletMutationWithClient} from '../../modules/member-wallet/server/postgres';
 export class TopupError extends Error {constructor(public code:string,public status=400){super(code)}}
 export function maximumPoints(){const n=Number(process.env.TOPUP_MAX_POINTS||100000);if(!Number.isSafeInteger(n)||n<1||n>2147483647)throw new TopupError('topup_configuration_invalid',503);return n}
 export function validatePoints(n:unknown){if(typeof n!=='number'||!Number.isSafeInteger(n)||n<1||n>maximumPoints())throw new TopupError('invalid_points');return n}
@@ -38,10 +39,24 @@ export function decideTopup(pool:Pool,adminId:string,id:unknown,action:unknown,n
  const admin=await c.query("SELECT id FROM admin_identities WHERE id=$1 AND status='active' FOR SHARE",[adminId]);if(!admin.rowCount)throw new TopupError('admin_forbidden',403);
  const r=(await c.query('SELECT * FROM member_topup_requests WHERE id=$1 FOR UPDATE',[id])).rows[0];if(!r)throw new TopupError('not_found',404);
  if(r.status!== 'PENDING'){if(r.status===action)return {...r,replayed:true};throw new TopupError('terminal_status',409)}
- if(await walletPathFromDatabase(c)!=='legacy')throw new TopupError('legacy_required',409);
+ const path=await walletPathFromDatabase(c);
  const m=(await c.query('SELECT status,demo_points FROM members WHERE id=$1 FOR UPDATE',[r.member_id])).rows[0];if(!m||action==='APPROVED'&&m.status!=='active')throw new TopupError('member_suspended',403);if(action==='APPROVED')validatePoints(r.requested_points);
- const before=m.demo_points;const after=action==='APPROVED'?before+r.requested_points:before;if(!Number.isSafeInteger(after)||after>2147483647)throw new TopupError('balance_overflow',409);
- if(action==='APPROVED')await c.query('UPDATE members SET demo_points=$1,updated_at=now() WHERE id=$2',[after,r.member_id]);
+ let before=Number(m.demo_points),after=before;
+ if(path==='wallet'){
+  await c.query("SELECT set_config('pair_live.member_id',$1,true)",[r.member_id]);
+  if(action==='APPROVED'){
+   const mutation=await applyWalletMutationWithClient(c,{memberId:r.member_id,type:'DEMO_GRANT',points:r.requested_points,referenceId:r.id,idempotencyKey:`topup:${r.id}:approved`,actor:adminId,source:'admin'});
+   before=mutation.entry.balanceBefore;after=mutation.entry.balanceAfter;
+  }else{
+   const balance=await c.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[r.member_id]);
+   before=Number(balance.rows[0]?.available_points??0);after=before;
+  }
+  if(after>2147483647)throw new TopupError('balance_overflow',409);
+ }else{
+  after=action==='APPROVED'?before+r.requested_points:before;
+  if(!Number.isSafeInteger(after)||after>2147483647)throw new TopupError('balance_overflow',409);
+  if(action==='APPROVED')await c.query('UPDATE members SET demo_points=$1,updated_at=now() WHERE id=$2',[after,r.member_id]);
+ }
  await c.query('INSERT INTO member_topup_audit(request_id,member_id,admin_id,action,points,balance_before,balance_after,admin_note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,r.member_id,adminId,action,r.requested_points,before,after,note]);
  const field=action==='APPROVED'?'approved':'rejected';return {...(await c.query(`UPDATE member_topup_requests SET status=$1,${field}_by=$2,${field}_at=now(),admin_note=$3 WHERE id=$4 RETURNING *`,[action,adminId,note,id])).rows[0],replayed:false};
  })}

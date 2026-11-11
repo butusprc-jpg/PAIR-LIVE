@@ -8,6 +8,11 @@ export type PostbackEvent={webhookEventId:string;type:'postback';userId:string;d
 async function currentRequest(client:PoolClient,id:string){
  const q=await client.query("SELECT r.id,r.member_id,r.status,r.requested_points AS points,r.created_at AS \"createdAt\",m.display_name AS \"displayName\",(r.slip_object_key IS NOT NULL) AS \"hasSlip\" FROM member_topup_requests r JOIN members m ON m.id=r.member_id WHERE r.id=$1",[id]);return q.rows[0] as {id:string;member_id:string;status:string;points:number;createdAt:Date;displayName:string;hasSlip:boolean}|undefined;
 }
+async function readCurrentRequest(pool:Pool,id:string){
+ const client=await pool.connect();
+ try{await client.query('BEGIN');await client.query("SELECT set_config('pair_live.topup_admin','true',true)");const row=await currentRequest(client,id);await client.query('COMMIT');return row}
+ catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}
+}
 // Called only after raw-body X-Line-Signature verification. The event row serializes
 // retries, while decideTopup's request lock and unique audit are authoritative.
 export async function processTopupPostback(pool:Pool,event:PostbackEvent,options:{fetch?:typeof fetch;allowlist?:string}={}){
@@ -20,17 +25,16 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
   if(state.rows[0]?.event_type!=='postback')throw new TopupError('webhook_event_conflict',409);
   if(state.rows[0]?.processing_status==='PROCESSED'){
    const action=await c.query('SELECT request_id,result,decision FROM member_topup_chat_actions WHERE event_id=$1',[event.webhookEventId]);
-   await c.query('COMMIT');committed=true;
    const admin=await verifiedLineAdmin(pool,event.userId,options.allowlist);
    if(admin&&action.rows[0]){
     const previous=action.rows[0];
-    const read=await pool.query('SELECT r.id,r.status,r.requested_points AS points,r.created_at AS "createdAt",m.display_name AS "displayName" FROM member_topup_requests r JOIN members m ON m.id=r.member_id WHERE r.id=$1',[previous.request_id]);
-    const row=read.rows[0];
+    const row=await currentRequest(c,previous.request_id);
+    await c.query('COMMIT');committed=true;
     const message=row&&['APPROVED','REJECTED'].includes(row.status)
      ? {type:'text',text:`รายการนี้${row.status==='APPROVED'?'อนุมัติแล้ว':'ปฏิเสธแล้ว'} · ${row.points} แต้ม · ${row.displayName.slice(0,80)}`}
      : {type:'text',text:'รายการนี้ยังรอตรวจสอบ กรุณาเปิดรายการล่าสุด'};
     await pushLine(event.userId,[message],row&&['APPROVED','REJECTED'].includes(row.status)?`${event.webhookEventId}:status:${row.status}`:event.webhookEventId,options.fetch);
-   }
+   }else{await c.query('COMMIT');committed=true}
    return {duplicate:true};
   }
   const admin=await verifiedLineAdmin(pool,event.userId,options.allowlist);
@@ -69,8 +73,8 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
   await c.query("UPDATE line_webhook_events SET processing_status='PROCESSED',processed_at=now() WHERE event_id=$1",[event.webhookEventId]);
   await c.query('COMMIT');committed=true;
   if(row&&['APPROVED','REJECTED','ALREADY_HANDLED'].includes(result)){
-   const latest=await pool.query('SELECT status FROM member_topup_requests WHERE id=$1',[row.id]);
-   if(latest.rows[0])row={...row,status:latest.rows[0].status};
+   const latest=await readCurrentRequest(pool,row.id);
+   if(latest)row={...row,status:latest.status};
   }
   if(result==='APPROVED'||result==='ALREADY_HANDLED')try{await dispatchApprovedMemberLine(pool,{fetch:options.fetch})}catch{/* Durable outbox retains the work for the retry worker. */}
   if(admin){
