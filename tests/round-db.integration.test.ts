@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {database} from '../lib/server/db';
-import {currentRound,myRoundEntries,roundTotals,submitDemoEntry,tickRoundEngine,updateDurationForNextRound} from '../lib/rounds/store';
+import {currentRound,myRoundEntries,roundTotals,submitDemoEntry,tickRoundEngine,updateDurationForNextRound,startManualRound} from '../lib/rounds/store';
 import {RoundError} from '../lib/rounds/core';
 test('PostgreSQL round lifecycle, idempotency, ownership, restart and no result generation', {skip:!process.env.DATABASE_URL||process.env.PAIR_ROUND_TEST_ISOLATED!=='1'}, async()=>{
  const {assertTestTarget}=await import('../lib/migration-manifest'); assertTestTarget(process.env.DATABASE_URL);
@@ -13,7 +13,8 @@ test('PostgreSQL round lifecycle, idempotency, ownership, restart and no result 
  const b=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Test B',1250) RETURNING id")).rows[0].id as string;
  let roundId:string|undefined;
  try{
-  const initial=await tickRoundEngine();assert.equal(initial.round?.status,'OPEN');assert.equal(initial.round?.durationMinutes,5);
+  assert.equal((await tickRoundEngine()).round,null);
+  const initial=await startManualRound('00000000-0000-4000-8000-000000000001');assert.equal(initial.round.status,'OPEN');assert.equal(initial.round.durationMinutes,5);
   roundId=initial.round!.id;
   assert.equal(new Date(initial.round!.closesAt).getTime()-new Date(initial.round!.opensAt).getTime(),300000);
   assert.equal((await tickRoundEngine()).round?.id,roundId);

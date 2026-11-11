@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {database} from '../lib/server/db';
 import {RoundError} from '../lib/rounds/core';
-import {currentRound,roundRuleSettings,submitDemoEntry,tickRoundEngine,updateRoundRule} from '../lib/rounds/store';
+import {currentRound,roundRuleSettings,submitDemoEntry,tickRoundEngine,updateRoundRule,startManualRound} from '../lib/rounds/store';
 
 test('entry limits and last-minute alert persist and apply only to the next round',{skip:!process.env.DATABASE_URL||process.env.PAIR_ROUND_RULES_TEST_ISOLATED!=='1'},async()=>{
  const {assertTestTarget}=await import('../lib/migration-manifest');assertTestTarget(process.env.DATABASE_URL);
@@ -13,7 +13,8 @@ test('entry limits and last-minute alert persist and apply only to the next roun
   await db.query('UPDATE round_settings SET duration_minutes=5 WHERE id=1');
   const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Rule fixture',1250) RETURNING id")).rows[0].id;
   assert.deepEqual(await roundRuleSettings(),{minEntryPoints:1,maxEntryPoints:1000000,alertBeforeClose:true});
-  const first=(await tickRoundEngine()).round!;
+  assert.equal((await tickRoundEngine()).round,null);
+  const first=(await startManualRound('00000000-0000-4000-8000-000000000001')).round;
   await updateRoundRule('maxEntryPoints',100);
   await updateRoundRule('minEntryPoints',10);
   await updateRoundRule('alertBeforeClose',false);
@@ -21,7 +22,8 @@ test('entry limits and last-minute alert persist and apply only to the next roun
   assert.equal((await currentRound()).round?.alertBeforeClose,true);
   await submitDemoEntry(member,first.id,{side:'even',demoPoints:1,idempotencyKey:randomUUID()});
   await db.query("UPDATE rounds SET status='SETTLED',settled_at=clock_timestamp() WHERE id=$1",[first.id]);
-  const second=(await tickRoundEngine()).round!;
+  assert.equal((await tickRoundEngine()).round,null);
+  const second=(await startManualRound('00000000-0000-4000-8000-000000000001')).round;
   assert.equal(second.alertBeforeClose,false);
   assert.notEqual(second.id,first.id);
   for(const points of [1,101])await assert.rejects(submitDemoEntry(member,second.id,{side:'even',demoPoints:points,idempotencyKey:randomUUID()}),error=>error instanceof RoundError&&error.code==='entry_points_out_of_range');

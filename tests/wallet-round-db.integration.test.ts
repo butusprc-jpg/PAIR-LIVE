@@ -17,7 +17,7 @@ test('PostgreSQL wallet and round entry commit/rollback, replay and concurrency'
   await appPool.query("SELECT set_config('pair_live.member_id',$1,false)",[member]);
   await appPool.query('INSERT INTO member_wallets(member_id,available_points) VALUES($1,100)',[member]);
   await appPool.query("UPDATE member_wallet_runtime_state SET phase='CUTOVER_PENDING' WHERE id=1");await appPool.query("UPDATE member_wallet_runtime_state SET phase='WALLET_ACTIVE',enabled=true,ever_cutover=true,cutover_at=now() WHERE id=1");
-  const {tickRoundEngine,submitDemoEntry}=await import('../lib/rounds/store');const {database}=await import('../lib/server/db');const state=await tickRoundEngine();const roundId=state.round!.id;
+  const {tickRoundEngine,startManualRound,submitDemoEntry,decideRound}=await import('../lib/rounds/store');const {database}=await import('../lib/server/db');assert.equal((await tickRoundEngine()).round,null);const state=await startManualRound(randomUUID());const roundId=state.round.id;
   const submit=(points:number,key=randomUUID(),side:'even'|'odd'='even')=>submitDemoEntry(member,roundId,{side,demoPoints:points,idempotencyKey:key});
   const key=randomUUID();const first=await submit(30,key);assert.equal(first.replayed,false);const replay=await submit(30,key);assert.equal(replay.replayed,true);
   let counts=await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member]);assert.equal(Number(counts.rows[0].available_points),70);
@@ -38,6 +38,20 @@ test('PostgreSQL wallet and round entry commit/rollback, replay and concurrency'
   counts=await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member]);assert.equal(Number(counts.rows[0].available_points),20);
   const ledger=await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_USE'",[member]);assert.equal(ledger.rows[0].n,2);
   const entries=await appPool.query('SELECT count(*)::int AS n FROM round_entries WHERE member_id=$1',[member]);assert.equal(entries.rows[0].n,2);
+  const actor=randomUUID();assert.equal((await decideRound(actor,roundId,'stop')).status,'SCANNING');
+  assert.equal((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member])).rows[0].available_points,'20');
+  await appPool.query("CREATE FUNCTION fail_round_refund() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.type='DEMO_REFUND' THEN RAISE EXCEPTION 'forced_refund_failure'; END IF; RETURN NEW; END$$");
+  await appPool.query('CREATE TRIGGER fail_refund BEFORE INSERT ON member_wallet_ledger FOR EACH ROW EXECUTE FUNCTION fail_round_refund()');
+  await assert.rejects(decideRound(actor,roundId,'cancel'),/forced_refund_failure/);
+  assert.equal((await appPool.query('SELECT status FROM rounds WHERE id=$1',[roundId])).rows[0].status,'SCANNING');
+  assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member])).rows[0].available_points),20);
+  assert.equal((await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_REFUND'",[member])).rows[0].n,0);
+  await appPool.query('DROP TRIGGER fail_refund ON member_wallet_ledger');
+  const [cancel,replayCancel]=await Promise.all([decideRound(actor,roundId,'cancel'),decideRound(actor,roundId,'cancel')]);
+  assert.deepEqual([cancel.replayed,replayCancel.replayed].sort(),[false,true]);
+  assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member])).rows[0].available_points),100);
+  assert.equal((await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_REFUND'",[member])).rows[0].n,2);
+  assert.equal((await appPool.query("SELECT count(*)::int AS n FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_CANCELLED'",[roundId])).rows[0].n,1);
   await database().end();
  }finally{if(originalUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=originalUrl;if(originalGate===undefined)delete process.env.PAIR_WALLET_CUTOVER_VERIFIED;else process.env.PAIR_WALLET_CUTOVER_VERIFIED=originalGate;if(originalOa===undefined)delete process.env.CONNECTED_LINE_OA_ID;else process.env.CONNECTED_LINE_OA_ID=originalOa;if(originalToken===undefined)delete process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;else process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=originalToken;await appPool?.end().catch(()=>{});await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});await admin.end()}
 });

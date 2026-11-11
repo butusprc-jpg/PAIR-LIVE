@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {database} from '../lib/server/db';
 import {currentRound,startManualRound,tickRoundEngine,updateRoundSettings} from '../lib/rounds/store';
 
-test('manual start creates one PostgreSQL round from server time and preserves Auto mode', {skip:!process.env.DATABASE_URL||process.env.PAIR_MANUAL_START_TEST_ISOLATED!=='1'}, async()=>{
+test('manual start creates one PostgreSQL round from server time and rejects Auto mode', {skip:!process.env.DATABASE_URL||process.env.PAIR_MANUAL_START_TEST_ISOLATED!=='1'}, async()=>{
  const {assertTestTarget}=await import('../lib/migration-manifest');assertTestTarget(process.env.DATABASE_URL);
  const db=database();
  try{
@@ -25,8 +25,9 @@ test('manual start creates one PostgreSQL round from server time and preserves A
   await db.query("UPDATE rounds SET status='SCANNING',closed_at=clock_timestamp() WHERE id=$1",[round.id]);
   await assert.rejects(startManualRound(admin),/round_already_active/);
   await db.query("UPDATE rounds SET status='SETTLED',settled_at=clock_timestamp() WHERE id=$1",[round.id]);
-  await updateRoundSettings(5,'auto');
-  await assert.rejects(startManualRound(admin),/manual_mode_required/);
-  const auto=(await tickRoundEngine()).round!;assert.equal(auto.status,'OPEN');assert.equal(auto.durationMinutes,5);
- }finally{await db.query('TRUNCATE round_audit_logs,rounds CASCADE');await updateRoundSettings(5,'auto');await db.end()}
+  await assert.rejects(updateRoundSettings(5,'auto'),/invalid_round_mode/);
+  await updateRoundSettings(5,'manual');
+  assert.equal((await tickRoundEngine()).round,null);
+  const next=await startManualRound(admin);assert.equal(next.round.status,'OPEN');assert.equal(next.round.durationMinutes,5);
+ }finally{await db.query('TRUNCATE round_audit_logs,rounds CASCADE');await updateRoundSettings(5,'manual');await db.end()}
 });
