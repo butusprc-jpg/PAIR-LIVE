@@ -3,7 +3,7 @@ export const runtime='nodejs';
 export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
 export async function GET(){
- if(process.env.RAILWAY_ENVIRONMENT_NAME!=='staging'||process.env.RAILWAY_SINGLE_OA_MODE!=='true')return Response.json({error:'not_found'},{status:404,headers});
+ if(process.env.RAILWAY_ENVIRONMENT_ID!=='1eae6433-f3f1-474c-b1c6-aed7632ccdbf')return Response.json({error:'not_found'},{status:404,headers});
  const token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
  const domain=process.env.RAILWAY_PUBLIC_DOMAIN;
  if(!token||!domain)return Response.json({status:'CONFIGURATION_MISSING'},{status:503,headers});
