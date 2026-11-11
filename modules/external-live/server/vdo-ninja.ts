@@ -31,13 +31,15 @@ export async function ensureStagingPrimaryCameraOa(db:Pick<Pool,'query'>,channel
  const oaId=process.env.CONNECTED_LINE_OA_ID;
  const token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
  if(!oaId||!token)throw new LiveError('oa_configuration_missing',503);
- const existing=await db.query('SELECT id FROM oa_service_control LIMIT 1');
- if(existing.rows.length)return; // Never override existing owner-controlled OA.
+ // An unrelated historical OA record must not prevent staging's configured
+ // OA from being created. Never overwrite, renew or re-enable owner records.
+ const existing=await db.query('SELECT id FROM oa_service_control WHERE line_oa_id=$1',[oaId]);
+ if(existing.rows.length)return;
  const hash=createHash('sha256').update(token).digest('hex');
  await db.query(
   `INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,verified_token_hash,expires_at)
    SELECT $1,'PAIR LIVE',true,$2,now()+interval '30 days'
-   WHERE NOT EXISTS (SELECT 1 FROM oa_service_control)
+   WHERE NOT EXISTS (SELECT 1 FROM oa_service_control WHERE enabled=true AND deleted_at IS NULL AND line_oa_id<>$1)
    ON CONFLICT (line_oa_id) DO NOTHING`,
   [oaId,hash]
  );
