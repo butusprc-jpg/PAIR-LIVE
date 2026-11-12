@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import {Pool} from 'pg';
 import {assertRailwayStagingTarget,assertRailwayRestoreTarget} from '../lib/server/staging-target';
 import {assertNeonMigrationTarget} from '../lib/server/neon-migration-target';
+import {databaseConnectionOptions} from '../lib/server/db';
 
 const testDatabase='pair_live_restore_test';
 const tables=['members','member_wallet_ledger','member_topup_requests','member_topup_audit','member_withdrawal_requests','member_withdrawal_audit','round_entries'] as const;
@@ -44,13 +45,15 @@ async function main(){
  neonUrl.searchParams.set('sslmode','verify-full');
   neonUrl.searchParams.set('sslrootcert','system');
  const stagingPool=new Pool({connectionString:stagingUrl,ssl:{rejectUnauthorized:false},max:1});
- const neonPool=new Pool({connectionString:neonUrl.toString(),ssl:{rejectUnauthorized:true},max:1});
+  const neonPool=new Pool({...databaseConnectionOptions(rawNeon),max:1});
  try{
   const version=await stagingPool.query("SELECT current_setting('server_version_num')::int AS version");
   if(Number(version.rows[0]?.version)<180000)throw new Error('restore_postgres_version_incompatible');
+  console.log('restore_postgres_version_verified');
   const present=await stagingPool.query('SELECT 1 FROM pg_database WHERE datname=$1',[testDatabase]);
   if(present.rowCount)throw new Error('restore_test_database_already_exists');
   const sourceBefore=await baseline(neonPool);
+  console.log('neon_readonly_baseline_verified');
   const archive=join('/backup',`neon-pre-v15-${new Date().toISOString().replace(/[:.]/g,'-')}.dump`);
   const archiveDir=await stat('/backup');
   if(!archiveDir.isDirectory())throw new Error('backup_volume_missing');
