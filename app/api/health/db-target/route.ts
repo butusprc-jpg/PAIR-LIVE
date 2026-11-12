@@ -26,7 +26,7 @@ async function probeNeon(env:NodeJS.ProcessEnv){
   const row=result.rows[0];
   await client.query('ROLLBACK');
   return {status:row?.database===env.EXPECTED_NEON_DATABASE&&row?.tls===true?'connected':'verification_failed'};
- }catch{return {status:'connection_failed'}};
+ }catch{return {status:'connection_failed'}}
  finally{
   if(client)client.release();
   await pool.end().catch(()=>{});
