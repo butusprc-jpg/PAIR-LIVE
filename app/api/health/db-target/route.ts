@@ -24,7 +24,8 @@ async function probeNeon(env:NodeJS.ProcessEnv){
   const result=await client.query("SELECT current_database() AS database, (SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()) AS tls");
   const row=result.rows[0];
   await client.query('ROLLBACK');
-  // Neon pooled connections terminate client TLS at the pooler; pg_stat_ssl reports the pooler-to-Postgres hop.\n  // databaseConnectionOptions enforces certificate-verified TLS on the client socket.\n  return {status:row?.database===env.EXPECTED_NEON_DATABASE?'connected':'verification_failed'};
+  // Neon pooled connections terminate client TLS at the pooler; pg_stat_ssl reports the pooler-to-Postgres hop.\n  // databaseConnectionOptions enforces certificate-verified TLS on the client socket.
+  return {status:row?.database===env.EXPECTED_NEON_DATABASE?'connected':'verification_failed'};
  }catch{return {status:'connection_failed'}}
  finally{
   if(client)client.release();
