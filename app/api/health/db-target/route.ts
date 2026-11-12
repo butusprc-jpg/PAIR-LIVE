@@ -1,10 +1,40 @@
-import {database} from '../../../../lib/server/db';
+import {Pool} from 'pg';
+import {database, databaseConnectionOptions} from '../../../../lib/server/db';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
 
-// Staging-only read-only database target diagnostic. Never expose connection strings,
-// credentials, roles, IP addresses, or database hostnames over HTTP.
+// Read-only staging diagnosis: the primary pool remains on Railway Postgres.
+// The optional Neon probe never runs migrations, member queries, or writes.
+async function probeNeon(env:NodeJS.ProcessEnv){
+ const raw=env.NEON_CUTOVER_DATABASE_URL;
+ if(!raw)return {status:'not_configured'};
+ let url:URL;
+ try{url=new URL(raw)}catch{return {status:'invalid_url'}};
+ const expected=(env.EXPECTED_NEON_HOST||'').toLowerCase();
+ if(!expected||!url.hostname.toLowerCase().endsWith('.neon.tech')||
+    url.hostname.toLowerCase()!==expected||
+    !env.EXPECTED_NEON_DATABASE||decodeURIComponent(url.pathname.slice(1))!==env.EXPECTED_NEON_DATABASE){
+  return {status:'target_mismatch'};
+ }
+ const pool=new Pool({...databaseConnectionOptions(raw),max:1,connectionTimeoutMillis:5000,idleTimeoutMillis:1000,statement_timeout:5000});
+ let client;
+ try{
+  client=await pool.connect();
+  await client.query('BEGIN READ ONLY');
+  const result=await client.query("SELECT current_database() AS database, (SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()) AS tls");
+  const row=result.rows[0];
+  await client.query('ROLLBACK');
+  return {status:row?.database===env.EXPECTED_NEON_DATABASE&&row?.tls===true?'connected':'verification_failed'};
+ }catch{return {status:'connection_failed'}};
+ finally{
+  if(client)client.release();
+  await pool.end().catch(()=>{});
+ }
+}
+
+// All responses contain only coarse statuses. Never disclose credentials, SQL,
+// connection strings, hosts, role names, errors, or member data.
 export async function GET(){
  const env=process.env;
  if(env.RAILWAY_PROJECT_ID!=='5a54ffee-e6e9-49c9-945e-9f2225c8acf8'||
@@ -19,6 +49,7 @@ export async function GET(){
   const tls=connection.rows[0]?.tls===true;
   const matchesExpected=Boolean(host&&env.EXPECTED_NEON_HOST&&host===env.EXPECTED_NEON_HOST.toLowerCase()&&
    env.EXPECTED_NEON_DATABASE&&databaseName===env.EXPECTED_NEON_DATABASE&&tls);
-  return Response.json({target,tls,matchesExpected},{headers});
+  const neon=await probeNeon(env);
+  return Response.json({target,tls,matchesExpected,neon},{headers});
  }catch{return Response.json({status:'database_unavailable'},{status:503,headers})}
 }
