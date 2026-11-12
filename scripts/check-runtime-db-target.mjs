@@ -1,7 +1,8 @@
 import pg from 'pg';
 
 async function main(){
- const raw=process.env.DATABASE_URL;
+ const raw=process.env.DB_TARGET_SOURCE==='cutover'?
+  process.env.NEON_CUTOVER_DATABASE_URL:process.env.DATABASE_URL;
  if(!raw)throw new Error('database_url_missing');
  const url=new URL(raw);
  if(!['postgres:','postgresql:'].includes(url.protocol))throw new Error('database_url_invalid');
