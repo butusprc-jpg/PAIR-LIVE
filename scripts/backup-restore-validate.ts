@@ -20,7 +20,7 @@ async function run(command:string,args:string[],env=process.env){
   child.on('error',()=>reject(new Error(`${command}_failed`)));
   child.on('exit',code=>{
    if(code===0)return resolve(output);
-   const category=/root certificate|sslrootcert/i.test(failure)?'tls_ca_missing':/does not match host|hostname mismatch/i.test(failure)?'tls_hostname_mismatch':/certificate verify/i.test(failure)?'tls_ca_untrusted':/translate host|name or service not known|temporary failure in name resolution/i.test(failure)?'dns_failed':/password authentication failed/i.test(failure)?'authentication_failed':/permission denied|row security/i.test(failure)?'permission_denied':/server version mismatch|aborting because of server version/i.test(failure)?'version_mismatch':'failed';
+   const category=/root certificate|sslrootcert/i.test(failure)?'tls_ca_missing':/does not match host|hostname mismatch/i.test(failure)?'tls_hostname_mismatch':/certificate verify/i.test(failure)?'tls_ca_untrusted':/translate host|name or service not known|temporary failure in name resolution/i.test(failure)?'dns_failed':/password authentication failed/i.test(failure)?'authentication_failed':/role .* does not exist/i.test(failure)?'role_missing':/unrecognized configuration parameter/i.test(failure)?'server_setting_incompatible':/permission denied|row security/i.test(failure)?'permission_denied':/server version mismatch|aborting because of server version/i.test(failure)?'version_mismatch':'failed';
    reject(new Error(`${command}_${category}`));
   });
  });
@@ -55,7 +55,6 @@ async function main(){
   if(Number(version.rows[0]?.version)<180000)throw new Error('restore_postgres_version_incompatible');
   console.log('restore_postgres_version_verified');
   const present=await stagingPool.query('SELECT 1 FROM pg_database WHERE datname=$1',[testDatabase]);
-  if(present.rowCount)throw new Error('restore_test_database_already_exists');
   await baseline(neonPool);
   console.log('neon_readonly_baseline_verified');
   const archiveDir=await stat('/backup');
@@ -79,7 +78,14 @@ async function main(){
   await writeFile('/backup/latest-archive',archive+'\n',{mode:0o600});
   console.log('backup_archive_verified');
 
-  await stagingPool.query(`CREATE DATABASE ${testDatabase}`);
+  if(!present.rowCount)await stagingPool.query(`CREATE DATABASE ${testDatabase}`);
+  // pg_dump does not export cluster roles, but RLS policies refer to these
+  // existing Neon roles. Create inert stand-ins only on isolated staging PG.
+  for(const role of ['neondb_owner','pair_round_reset_counter','pair_round_reset_executor']){
+   const found=await stagingPool.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[role]);
+   if(!found.rowCount)await stagingPool.query(`CREATE ROLE ${role} NOLOGIN`);
+  }
+  console.log('restore_roles_ready');
   const testUrl=new URL(stagingUrl);
   testUrl.pathname=`/${testDatabase}`;
   assertRailwayRestoreTarget({...env,RESTORE_TEST_DATABASE_URL:testUrl.toString()});
