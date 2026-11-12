@@ -12,6 +12,7 @@
     "notification:worker": "tsx scripts/notification-worker.ts",
     "line:preflight": "tsx scripts/line-preflight.ts",
     "db:migrate": "tsx scripts/migrate.ts",
+    "backup:restore:validate": "tsx scripts/backup-restore-validate.ts",
     "db:metadata": "tsx scripts/db-metadata.ts"
   },
   "dependencies": {
