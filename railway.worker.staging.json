@@ -1,0 +1,12 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile.railway-migrate"
+  },
+  "deploy": {
+    "startCommand": "npm run db:migrate -- --staging-validate",
+    "restartPolicyType": "NEVER",
+    "numReplicas": 1
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile.railway-worker"
+  },
+  "deploy": {
+    "startCommand": "sh -c 'test -x node_modules/.bin/tsx && test -f scripts/round-worker.ts && echo worker_image_ready'",
+    "restartPolicyType": "NEVER",
+    "numReplicas": 1
+  }
+}
