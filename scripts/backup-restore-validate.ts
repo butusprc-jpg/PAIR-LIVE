@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process';
 import {chmod,stat,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
+import {rootCertificates} from 'node:tls';
 import {Pool} from 'pg';
 import {assertRailwayStagingTarget,assertRailwayRestoreTarget} from '../lib/server/staging-target';
 import {assertNeonMigrationTarget} from '../lib/server/neon-migration-target';
@@ -19,7 +20,7 @@ async function run(command:string,args:string[],env=process.env){
   child.on('error',()=>reject(new Error(`${command}_failed`)));
   child.on('exit',code=>{
    if(code===0)return resolve(output);
-   const category=/root certificate|sslrootcert/i.test(failure)?'tls_ca_missing':/certificate verify|hostname mismatch/i.test(failure)?'tls_verify_failed':/translate host|name or service not known|temporary failure in name resolution/i.test(failure)?'dns_failed':/password authentication failed/i.test(failure)?'authentication_failed':/permission denied|row security/i.test(failure)?'permission_denied':/server version mismatch|aborting because of server version/i.test(failure)?'version_mismatch':'failed';
+   const category=/root certificate|sslrootcert/i.test(failure)?'tls_ca_missing':/does not match host|hostname mismatch/i.test(failure)?'tls_hostname_mismatch':/certificate verify/i.test(failure)?'tls_ca_untrusted':/translate host|name or service not known|temporary failure in name resolution/i.test(failure)?'dns_failed':/password authentication failed/i.test(failure)?'authentication_failed':/permission denied|row security/i.test(failure)?'permission_denied':/server version mismatch|aborting because of server version/i.test(failure)?'version_mismatch':'failed';
    reject(new Error(`${command}_${category}`));
   });
  });
@@ -42,8 +43,11 @@ async function main(){
  assertNeonMigrationTarget(env);
  const rawNeon=env.NEON_CUTOVER_DATABASE_URL!;
  const neonUrl=new URL(rawNeon);
+  if(neonUrl.hostname.includes('-pooler.'))neonUrl.hostname=env.EXPECTED_NEON_HOST!;
  neonUrl.searchParams.set('sslmode','verify-full');
-  neonUrl.searchParams.set('sslrootcert','system');
+  const caPath='/tmp/neon-root-ca.pem';
+  await writeFile(caPath,rootCertificates.join('\n'),{mode:0o600});
+  neonUrl.searchParams.set('sslrootcert',caPath);
  const stagingPool=new Pool({connectionString:stagingUrl,ssl:{rejectUnauthorized:false},max:1});
   const neonPool=new Pool({...databaseConnectionOptions(rawNeon),max:1});
  try{
