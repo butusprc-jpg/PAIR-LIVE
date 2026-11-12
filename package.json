@@ -13,7 +13,8 @@
     "line:preflight": "tsx scripts/line-preflight.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "backup:restore:validate": "tsx scripts/backup-restore-validate.ts",
-    "db:metadata": "tsx scripts/db-metadata.ts"
+    "db:metadata": "tsx scripts/db-metadata.ts",
+    "oa:bind:production": "tsx scripts/bind-production-oa.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1161.0",
