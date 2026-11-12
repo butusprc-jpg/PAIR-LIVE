@@ -24,4 +24,11 @@ async function main(){
  }finally{await pool.end()}
 }
 
-main().catch(()=>{console.error('runtime_db_target_check_failed');process.exitCode=1});
+main().catch(error=>{
+ const rawCode=error?.code;
+ const code=typeof rawCode==='string'&&/^[A-Z0-9_]{2,40}$/.test(rawCode)?rawCode:
+  error?.message==='database_url_missing'?'DATABASE_URL_MISSING':
+  error?.message==='database_url_invalid'?'DATABASE_URL_INVALID':'UNKNOWN';
+ console.error(JSON.stringify({status:'runtime_db_target_check_failed',code}));
+ process.exitCode=1;
+});
