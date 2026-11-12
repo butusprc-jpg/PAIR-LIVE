@@ -12,11 +12,9 @@ async function probeNeon(env:NodeJS.ProcessEnv){
  let url:URL;
  try{url=new URL(raw)}catch{return {status:'invalid_url'}};
  const expected=(env.EXPECTED_NEON_HOST||'').toLowerCase();
- if(!expected||!url.hostname.toLowerCase().endsWith('.neon.tech')||
-    url.hostname.toLowerCase()!==expected||
-    !env.EXPECTED_NEON_DATABASE||decodeURIComponent(url.pathname.slice(1))!==env.EXPECTED_NEON_DATABASE){
-  return {status:'target_mismatch'};
- }
+ if(!url.hostname.toLowerCase().endsWith('.neon.tech'))return {status:'not_neon'};
+ if(!expected||url.hostname.toLowerCase()!==expected)return {status:'host_mismatch'};
+ if(!env.EXPECTED_NEON_DATABASE||decodeURIComponent(url.pathname.slice(1))!==env.EXPECTED_NEON_DATABASE)return {status:'database_mismatch'};
  const pool=new Pool({...databaseConnectionOptions(raw),max:1,connectionTimeoutMillis:5000,idleTimeoutMillis:1000,statement_timeout:5000});
  let client;
  try{
