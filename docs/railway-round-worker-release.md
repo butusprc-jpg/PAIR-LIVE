@@ -1,6 +1,6 @@
 # PAIR LIVE round worker release preparation
 
-Use the same reviewed Git commit for the Vercel app and the Railway service `pair-live-round-worker`. The Railway service runs the existing `npm run round:worker` process. It has no public domain or HTTP port, and does not host LiveKit or PostgreSQL. Keep one replica during the first release. `railway.json` sets the production-only install, start command, and on-failure restart policy. Railway must deliver SIGTERM on shutdown; the worker finishes the current tick and closes its PostgreSQL pool.
+Use the same reviewed Git commit for the Vercel app and the Railway service `pair-live-round-worker`. The service will run the existing `npm run round:worker` process after cutover approval. It has no public domain or HTTP port, and does not host LiveKit or PostgreSQL. Keep one replica during the first release. Set `Dockerfile.railway-worker`, `npm run round:worker`, and the on-failure restart policy directly in Railway. Railway must deliver SIGTERM on shutdown; the worker finishes the current tick and closes its PostgreSQL pool.
 
 Required Railway variables (names only):
 
@@ -12,7 +12,7 @@ Required Railway variables (names only):
 
 The worker advances existing rounds and dispatches queued notifications. The app no longer uses LiveKit credentials. External LIVE visibility is independent of round timing; the guarded `/api/stream/activate` endpoint can start a round only when called separately. Starting the external player does not call it. The Railway worker and admin tick API do not start a new round.
 
-The current Railway worker service is still a migration validator with zero running replicas. Its future runtime settings are in `railway.worker.json`; the repository-root `railway.json` belongs to Web. Do not attach the worker config or start `round:worker` until the database, LINE binding, and dispatcher ownership checks pass.
+The current Railway worker service is still a migration validator with zero running replicas. Its future runtime settings are recorded in `railway.worker.json`, but Railway's connector rejects selecting legacy config files. The repository-root `railway.json` was removed because it overrode the Worker build with the Web Dockerfile and caused `tsx: not found`. Set Dockerfile and start command per service in Railway. Do not start `round:worker` until the database, LINE binding, and dispatcher ownership checks pass.
 
 Migrations 032–036 and 040 must be reviewed and applied to the existing production database **before** starting the Railway worker or activating this app release. This repository's migration command accepts only an isolated local test database or the gated Railway staging database and cannot apply to Production. Apply the reviewed SQL using the production migration process; verify its checksum against `migrationManifest()` and its history record. Do not remove existing Neon branches or backups.
 
