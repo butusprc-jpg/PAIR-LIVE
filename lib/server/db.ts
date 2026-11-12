@@ -1,5 +1,5 @@
 import {Pool} from 'pg';
-import {assertRailwayStagingTarget} from './staging-target';
+import {assertRailwayRuntimeTarget} from './staging-target';
 let pool:Pool|undefined;
 export function databaseConnectionOptions(raw:string){
  const url=new URL(raw);
@@ -17,6 +17,6 @@ export function databaseConnectionOptions(raw:string){
 }
 export function database(){
  if(!process.env.DATABASE_URL)throw new Error('database_not_configured');
- if(process.env.RAILWAY_STAGING_NO_LINE==='true')assertRailwayStagingTarget(process.env);
+ if(process.env.RAILWAY_STAGING_NO_LINE==='true')assertRailwayRuntimeTarget(process.env);
  return pool??=new Pool({...databaseConnectionOptions(process.env.DATABASE_URL),max:5,connectionTimeoutMillis:5000,idleTimeoutMillis:30000});
 }
