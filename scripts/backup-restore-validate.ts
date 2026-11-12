@@ -11,12 +11,16 @@ const tables=['members','member_wallet_ledger','member_topup_requests','member_t
 async function run(command:string,args:string[],env=process.env){
  return new Promise<string>((resolve,reject)=>{
   const child=spawn(command,args,{env,stdio:['ignore','pipe','pipe']});
-  let output='';
+  let output='',failure='';
   child.stdout.on('data',(chunk:Buffer)=>{output+=chunk.toString();if(output.length>1_000_000)child.kill()});
-  // Tool errors may contain connection information. Keep them out of logs.
-  child.stderr.resume();
+  // Classify errors in memory; stderr may contain connection information.
+  child.stderr.on('data',(chunk:Buffer)=>{failure=(failure+chunk.toString()).slice(-4096)});
   child.on('error',()=>reject(new Error(`${command}_failed`)));
-  child.on('exit',code=>code===0?resolve(output):reject(new Error(`${command}_failed`)));
+  child.on('exit',code=>{
+   if(code===0)return resolve(output);
+   const category=/root certificate|sslrootcert/i.test(failure)?'tls_ca_missing':/certificate verify|hostname mismatch/i.test(failure)?'tls_verify_failed':/translate host|name or service not known|temporary failure in name resolution/i.test(failure)?'dns_failed':/password authentication failed/i.test(failure)?'authentication_failed':/permission denied|row security/i.test(failure)?'permission_denied':/server version mismatch|aborting because of server version/i.test(failure)?'version_mismatch':'failed';
+   reject(new Error(`${command}_${category}`));
+  });
  });
 }
 
@@ -38,6 +42,7 @@ async function main(){
  const rawNeon=env.NEON_CUTOVER_DATABASE_URL!;
  const neonUrl=new URL(rawNeon);
  neonUrl.searchParams.set('sslmode','verify-full');
+  neonUrl.searchParams.set('sslrootcert','system');
  const stagingPool=new Pool({connectionString:stagingUrl,ssl:{rejectUnauthorized:false},max:1});
  const neonPool=new Pool({connectionString:neonUrl.toString(),ssl:{rejectUnauthorized:true},max:1});
  try{
