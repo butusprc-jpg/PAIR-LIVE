@@ -21,6 +21,7 @@ jobs:
           --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       SETTLEMENT_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
@@ -32,6 +33,8 @@ jobs:
       - run: npm ci
       - name: OCR parity and admin-fee unit tests
         run: node --import tsx --test tests/round-core.test.ts tests/game-notices.test.ts
+      - name: Bootstrap isolated PostgreSQL migration baseline
+        run: npm run db:migrate -- --apply
       - name: PostgreSQL synthetic OCR, debit, award, duplicate and rollback tests
         run: node --import tsx --test tests/round-settlement-db.integration.test.ts
       - name: TypeScript
