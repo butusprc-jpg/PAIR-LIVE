@@ -5,7 +5,7 @@ import {database} from '../lib/server/db';
 import {Pool} from 'pg';
 import {assertTestTarget} from '../lib/migration-manifest';
 import {previewRoundReset,resetRoundEpoch} from '../lib/server/round-reset';
-import {currentRound,myRoundEntries,roundTotals,submitDemoEntry,tickRoundEngine} from '../lib/rounds/store';
+import {currentRound,myRoundEntries,roundTotals,submitDemoEntry,tickRoundEngine,startManualRound} from '../lib/rounds/store';
 import {readRoundParticipationReport} from '../lib/admin-reports';
 import {createPostgresNotificationStore,createPostgresReportReader,createReportService} from '../modules/report-notification';
 import {dispatchClosingBroadcast} from '../lib/line/round-broadcast';
@@ -92,7 +92,8 @@ test('concurrent epoch resets archive pending rounds once without changing point
  await assert.rejects(db.query("UPDATE round_entries SET status='CANCELLED' WHERE round_id=$1",[oldId]),/archived_round_entry_is_immutable/);
  await assert.rejects(db.query("INSERT INTO round_entries(round_id,member_id,side,demo_points,idempotency_key) VALUES($1,$2,'odd',5,$3)",[oldId,member,randomUUID()]),/archived_round_entry_is_immutable/);
  await assert.rejects(submitDemoEntry(member,oldId,{side:'odd',demoPoints:5,idempotencyKey:randomUUID()}),/round_not_found/);
- const opened=await tickRoundEngine();assert.equal(opened.round?.status,'OPEN');assert.notEqual(opened.round?.id,oldId);assert.equal((await roundTotals(oldId)).even.points,0);
+ assert.equal((await tickRoundEngine()).round,null);
+ const opened=await startManualRound(admin);assert.equal(opened.round.status,'OPEN');assert.notEqual(opened.round.id,oldId);assert.equal((await roundTotals(oldId)).even.points,0);
  assert.equal((await db.query('SELECT epoch_id FROM rounds WHERE id=$1',[opened.round!.id])).rows[0].epoch_id,result.epochId);
  assert.equal((await db.query("SELECT count(*)::int AS n FROM round_audit_logs WHERE action='ROUND_EPOCH_RESET'")).rows[0].n,1);
  await db.query("UPDATE rounds SET status='SETTLED',settled_at=now() WHERE id=$1",[opened.round!.id]);

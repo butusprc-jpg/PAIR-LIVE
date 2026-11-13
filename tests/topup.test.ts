@@ -98,6 +98,7 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.ok(seen.some(x=>x.to===adminA&&x.text.includes('อนุมัติแล้ว')));
   assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[pending.id])).rows[0].status,'SENT');
   assert.equal((await run('review-synthetic',adminA,`topup:v2:review:APPROVED:${pending.id}`)).duplicate,true);
+  assert.ok(seen.at(-1)?.text.includes('อนุมัติแล้ว'),'replayed webhook must read the approved row under admin RLS');
   assert.equal((await run('review-stale',adminA,`topup:v2:review:APPROVED:${pending.id}`)).result,'ALREADY_HANDLED');
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,600);
   assert.equal(seen.filter(x=>x.to===memberLine&&x.text.includes('500 แต้ม')).length,1);

@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {database} from '../lib/server/db';
 import {businessSettingsOverview,shopStatusAt,updateBusinessSetting} from '../lib/rounds/business-settings';
 import {RoundError} from '../lib/rounds/core';
-import {submitDemoEntry,tickRoundEngine,updateRoundSettings} from '../lib/rounds/store';
+import {submitDemoEntry,tickRoundEngine,updateRoundSettings,startManualRound} from '../lib/rounds/store';
 
 test('Bangkok shop hours include overnight windows',()=>{
  const hours={open:'22:00',close:'02:00'};
@@ -24,7 +24,8 @@ test('business settings are persisted, next-round only, and cap concurrent entri
   const members=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('Business fixture A',1250),('Business fixture B',1250) RETURNING id")).rows.map(row=>row.id as string);
   const start=await businessSettingsOverview();
   assert.deepEqual(start.settings,{sideDifferenceLimit:null,maxRoundPoints:null,minRoundPoints:null,adminFeeRate:null,shopHours:null});
-  const first=(await tickRoundEngine()).round!;
+  assert.equal((await tickRoundEngine()).round,null);
+  const first=(await startManualRound('00000000-0000-4000-8000-000000000001')).round;
   await updateBusinessSetting('sideDifferenceLimit',2);
   await updateBusinessSetting('maxRoundPoints',10);
   await updateBusinessSetting('minRoundPoints',9);
@@ -43,7 +44,7 @@ test('business settings are persisted, next-round only, and cap concurrent entri
   await db.query("UPDATE rounds SET status='SETTLED',settled_at=clock_timestamp() WHERE id=$1",[first.id]);
   assert.equal((await tickRoundEngine()).round,null);
   await updateBusinessSetting('shopHours',null);
-  const second=(await tickRoundEngine()).round!;
+  const second=(await startManualRound('00000000-0000-4000-8000-000000000001')).round;
   assert.notEqual(second.id,first.id);
   assert.equal((await businessSettingsOverview()).currentRound?.minRoundPoints,9);
   await updateBusinessSetting('minRoundPoints',8);

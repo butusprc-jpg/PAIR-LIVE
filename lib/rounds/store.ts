@@ -47,12 +47,8 @@ async function transition(client:PoolClient){
  return {round:await mapRoundWithRules(client,row),serverTime:now};
 }
 export async function currentRound(){return inTransaction(async client=>transition(client))}
-export type RoundMode='manual'|'auto';
-async function readRoundMode(client:PoolClient):Promise<RoundMode>{
- const result=await client.query("SELECT details->>'to' AS mode FROM round_audit_logs WHERE action='ROUND_MODE_CHANGED' ORDER BY id DESC LIMIT 1");
- return result.rows[0]?.mode==='manual'?'manual':'auto';
-}
-export async function roundSettings(){const result=await database().query("SELECT duration_minutes,updated_at,(SELECT details->>'to' FROM round_audit_logs WHERE action='ROUND_MODE_CHANGED' ORDER BY id DESC LIMIT 1) AS mode FROM round_settings WHERE id=1");const row=result.rows[0];return {durationMinutes:Number(row?.duration_minutes??5),mode:row?.mode==='manual'?'manual' as const:'auto' as const,updatedAt:row?.updated_at}}
+export type RoundMode='manual';
+export async function roundSettings(){const result=await database().query('SELECT duration_minutes,updated_at FROM round_settings WHERE id=1');const row=result.rows[0];return {durationMinutes:Number(row?.duration_minutes??5),mode:'manual' as const,updatedAt:row?.updated_at}}
 export async function roundRuleSettings(){return inTransaction(readRules)}
 export async function updateRoundRule(key:RoundRuleKey,value:number|boolean){
  if(key==='alertBeforeClose'?typeof value!=='boolean':!Number.isInteger(value)||Number(value)<1||Number(value)>1000000)throw new RoundError('invalid_round_rule');
@@ -65,35 +61,17 @@ export async function updateRoundRule(key:RoundRuleKey,value:number|boolean){
   return next;
  });
 }
-export async function tickRoundEngine(options:{requireLiveForAuto?:boolean;allowAutoStart?:boolean}={}){return inTransaction(async client=>{
+export async function tickRoundEngine(_options:{requireLiveForAuto?:boolean;allowAutoStart?:boolean}={}){return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=await transition(client);
-  if(current.round){await enqueueClosingBroadcast(client,current.round,current.serverTime);return current}
-  if(options.allowAutoStart===false)return current;
-  if(options.requireLiveForAuto){const live=await client.query("SELECT v.display_enabled FROM vdo_ninja_tenants v JOIN oa_service_control o ON o.id=v.oa_id WHERE o.line_oa_id=$1",[process.env.CONNECTED_LINE_OA_ID||'']);if(live.rows[0]?.display_enabled!==true)return current;}
-  if(await readRoundMode(client)==='manual')return current;
-  if(options.requireLiveForAuto){const prior=await client.query("SELECT a.details->>'source' AS source FROM rounds r JOIN round_audit_logs a ON a.round_id=r.id AND a.action='ROUND_OPENED' WHERE r.epoch_id=current_round_epoch_id() ORDER BY r.id DESC,a.id DESC LIMIT 1");if(prior.rows[0]&&!['livekit','livekit_auto','external_live','external_live_auto'].includes(prior.rows[0]?.source))return current}
-  await assertConnectedOaInTransaction(client);
-  const business=await readBusinessSettings(client);
-  if(shopStatusAt(business.shopHours,current.serverTime)==='CLOSED')return current;
-  const rules=await readRules(client);
-  const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1');
-  const duration=validateDuration(Number(setting.rows[0]?.duration_minutes??5));
-  const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status)
-  SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN' FROM t RETURNING *`,[duration]);
-  const round=mapRound(inserted.rows[0]);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_OPENED',jsonb_build_object('duration_minutes',$2::int,'source',$3::text))",[round.id,duration,options.requireLiveForAuto?'external_live_auto':'scheduler']);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_BUSINESS_SETTINGS_APPLIED',$2::jsonb)",[round.id,JSON.stringify(business)]);
-  await enqueueClosingBroadcast(client,round,await dbNow(client));
-  return {round:{...round,alertBeforeClose:rules.alertBeforeClose},serverTime:await dbNow(client)};
+  if(current.round)await enqueueClosingBroadcast(client,current.round,current.serverTime);
+  return current;
  })}
 export async function startManualRound(adminId:string){
  if(!/^[0-9a-f-]{36}$/i.test(adminId))throw new RoundError('invalid_admin_id',403);
  return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
   await assertConnectedOaInTransaction(client);
-  if(await readRoundMode(client)!=='manual')throw new RoundError('manual_mode_required',409);
   const current=await transition(client);
   if(current.round)throw new RoundError('round_already_active',409);
   const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
@@ -108,38 +86,15 @@ export async function startManualRound(adminId:string){
   return {round:{...round,alertBeforeClose:rules.alertBeforeClose},serverTime:await dbNow(client)};
  });
 }
-export async function startRoundForLive(actorId:string,idempotencyKey:string){
- if(!/^[0-9a-f-]{36}$/i.test(actorId)||! /^[0-9a-f-]{36}$/i.test(idempotencyKey))throw new RoundError('invalid_live_start',400);
- return inTransaction(async client=>{
-  await client.query('SELECT pg_advisory_xact_lock(74021601)');
-  await assertConnectedOaInTransaction(client);
-  const replay=await client.query("SELECT r.* FROM round_audit_logs a JOIN rounds r ON r.id=a.round_id WHERE a.action='ROUND_OPENED' AND a.details->>'live_start_key'=$1 ORDER BY a.id DESC LIMIT 1",[idempotencyKey]);
-  if(replay.rows[0]){if(Number(replay.rows[0].epoch_id)!==Number((await client.query('SELECT current_round_epoch_id() AS id')).rows[0].id))throw new RoundError('live_start_key_archived',409);if(['SETTLED','CANCELLED'].includes(replay.rows[0].status))throw new RoundError('live_start_key_finished',409);return {round:await mapRoundWithRules(client,replay.rows[0]),serverTime:await dbNow(client),replayed:true}}
-  const current=await transition(client);
-  if(current.round){const source=await client.query("SELECT details->>'source' AS source FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_OPENED' ORDER BY id DESC LIMIT 1",[current.round.id]);if(['livekit','livekit_auto','external_live','external_live_auto'].includes(source.rows[0]?.source))return {...current,replayed:true};throw new RoundError('round_already_active',409)}
-  const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
-  const duration=validateDuration(Number(setting.rows[0]?.duration_minutes??5));
-  const rules=await readRules(client),business=await readBusinessSettings(client);
-  const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status)
-   SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN' FROM t RETURNING *`,[duration]);
-  const round=mapRound(inserted.rows[0]);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_OPENED',jsonb_build_object('duration_minutes',$3::int,'live_start_key',$4::text,'source','external_live'))",[round.id,actorId,duration,idempotencyKey]);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_BUSINESS_SETTINGS_APPLIED',$2::jsonb)",[round.id,JSON.stringify(business)]);
-  await enqueueClosingBroadcast(client,round,await dbNow(client));
-  return {round:{...round,alertBeforeClose:rules.alertBeforeClose},serverTime:await dbNow(client),replayed:false};
- });
-}
-export async function updateRoundSettings(duration:number,mode?:RoundMode){validateDuration(duration);if(mode!==undefined&&mode!=='manual'&&mode!=='auto')throw new RoundError('invalid_round_mode');return inTransaction(async client=>{
+/** Legacy LIVE round creation is disabled; use the manual admin round command. */
+export async function startRoundForLive(_actorId:string,_idempotencyKey:string):Promise<never>{throw new RoundError('use_manual_round_start',410)}
+export async function updateRoundSettings(duration:number,mode?:'manual'|'auto'){validateDuration(duration);if(mode!==undefined&&mode!=='manual')throw new RoundError('invalid_round_mode');return inTransaction(async client=>{
  await client.query('SELECT pg_advisory_xact_lock(74021601)');
  const previous=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
  const old=Number(previous.rows[0].duration_minutes);
- const oldMode=await readRoundMode(client);
- const nextMode=mode??oldMode;
  await client.query('UPDATE round_settings SET duration_minutes=$1,updated_at=clock_timestamp() WHERE id=1',[duration]);
  if(old!==duration)await client.query("INSERT INTO round_audit_logs(actor,action,details) VALUES('internal','DURATION_CHANGED',jsonb_build_object('from',$1::int,'to',$2::int))",[old,duration]);
- if(oldMode!==nextMode)await client.query("INSERT INTO round_audit_logs(actor,action,details) VALUES('internal','ROUND_MODE_CHANGED',jsonb_build_object('from',$1::text,'to',$2::text))",[oldMode,nextMode]);
- return {previous:old,next:duration,previousMode:oldMode,mode:nextMode};
+ return {previous:old,next:duration,mode:'manual' as const};
  })}
 export async function updateDurationForNextRound(duration:number){return updateRoundSettings(duration)}
 export async function submitDemoEntry(memberId:string,roundId:string,input:EntryInput){validateEntry(input);if(!/^\d+$/.test(roundId))throw new RoundError('invalid_round_id');return inTransaction(async client=>{
@@ -168,6 +123,53 @@ export async function submitDemoEntry(memberId:string,roundId:string,input:Entry
  return {id:inserted.rows[0].id,roundId,status:'PENDING',replayed:false,walletBalance};
  })}
 export async function roundTotals(roundId:string){const result=await database().query('SELECT even_people,even_points,odd_people,odd_points FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id()',[roundId]);const row=result.rows[0];return {even:{people:Number(row?.even_people||0),points:Number(row?.even_points||0)},odd:{people:Number(row?.odd_people||0),points:Number(row?.odd_points||0)}}}
+/** Admin action. The round lock serializes stop/cancel with entries and worker transitions. */
+export async function decideRound(adminId:string,roundId:string,action:'stop'|'cancel'){
+ if(!/^[0-9a-f-]{36}$/i.test(adminId)||!/^\d+$/.test(roundId))throw new RoundError('invalid_round_action',400);
+ return inTransaction(async client=>{
+  await client.query('SELECT pg_advisory_xact_lock(74021601)');
+  const found=await client.query('SELECT * FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id() FOR UPDATE',[roundId]);
+  const round=found.rows[0];if(!round)throw new RoundError('round_not_found',404);
+  if(action==='stop'){
+   if(round.status==='SCANNING'||round.status==='REVIEW_REQUIRED')return {status:round.status,replayed:true};
+   if(round.status!=='OPEN')throw new RoundError('round_not_open',409);
+   await client.query("UPDATE rounds SET status='SCANNING',closed_at=clock_timestamp() WHERE id=$1",[roundId]);
+   await client.query("INSERT INTO round_audit_logs(round_id,actor,action) VALUES($1,$2,'ROUND_STOPPED')",[roundId,adminId]);
+   return {status:'SCANNING',replayed:false};
+  }
+  if(round.status==='CANCELLED')return {status:'CANCELLED',replayed:true};
+  if(round.status==='SETTLED')throw new RoundError('round_already_settled',409);
+  const walletEnabled=(await walletPathFromDatabase(client))==='wallet';
+  // round_entries has FORCE RLS scoped to pair_live.member_id. Traverse members
+  // under that existing policy; never grant the admin connection unscoped access.
+  const members=await client.query('SELECT id FROM members ORDER BY id');
+  let refundedEntries=0;
+  for(const member of members.rows){
+   await client.query("SELECT set_config('pair_live.member_id',$1,true)",[member.id]);
+   const entries=await client.query("SELECT * FROM round_entries WHERE round_id=$1 AND member_id=$2 AND status='PENDING' ORDER BY id FOR UPDATE",[roundId,member.id]);
+   for(const entry of entries.rows){
+   if(walletEnabled){
+    const use=await client.query("SELECT id,points FROM member_wallet_ledger WHERE member_id=$1 AND reference_id=$2 AND type='DEMO_USE'",[entry.member_id,`ROUND_${roundId}_${entry.idempotency_key}`]);
+    if(!use.rows[0]||Number(use.rows[0].points)!==Number(entry.demo_points))throw new RoundError('original_wallet_use_missing',409);
+    const refund=await applyWalletMutationWithClient(client,{memberId:entry.member_id,type:'DEMO_REFUND',points:Number(entry.demo_points),referenceId:`ROUND_REFUND_${entry.id}`,idempotencyKey:entry.id,actor:adminId,source:'round'});
+    if(refund.replayed)throw new RoundError('refund_state_conflict',409);
+   }else{
+    const updated=await client.query('UPDATE members SET demo_points=demo_points+$1,updated_at=clock_timestamp() WHERE id=$2 RETURNING id',[entry.demo_points,entry.member_id]);
+    if(!updated.rows[0])throw new RoundError('member_unavailable',409);
+   }
+   const changed=await client.query("UPDATE round_entries SET status='CANCELLED' WHERE id=$1 AND member_id=$2 AND status='PENDING' RETURNING id",[entry.id,member.id]);
+   if(changed.rowCount!==1)throw new RoundError('refund_state_conflict',409);
+   refundedEntries++;
+   }
+  }
+  await client.query("SELECT set_config('pair_live.member_id','',true)");
+  // A missing RLS-visible row must fail closed, so a cancellation cannot strand points.
+  if(refundedEntries!==Number(round.even_people)+Number(round.odd_people))throw new RoundError('round_entries_mismatch',409);
+  await client.query("UPDATE rounds SET status='CANCELLED',closed_at=coalesce(closed_at,clock_timestamp()) WHERE id=$1",[roundId]);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_CANCELLED',jsonb_build_object('refunded_entries',$3::int))",[roundId,adminId,refundedEntries]);
+  return {status:'CANCELLED',replayed:false,refundedEntries};
+ });
+}
 export async function myRoundEntries(memberId:string){return inTransaction(async client=>{await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);const result=await client.query('SELECT e.id,e.round_id,e.side,e.demo_points,e.status,e.created_at FROM round_entries e JOIN rounds r ON r.id=e.round_id WHERE e.member_id=$1 AND r.epoch_id=current_round_epoch_id() ORDER BY e.created_at DESC LIMIT 100',[memberId]);return result.rows})}
 /** Internal-only refund path. Call after an authorized cancellation; no browser route exposes it. */
 export async function refundCancelledDemoEntry(memberId:string,entryId:string){return inTransaction(async client=>{
