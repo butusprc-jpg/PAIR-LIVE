@@ -5,6 +5,7 @@ import {Pool} from 'pg';
 import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
 import {settleVerifiedRound} from '../lib/rounds/settlement';
 import {startManualRound} from '../lib/rounds/store';
+import {updateBusinessSetting} from '../lib/rounds/business-settings';
 import {database} from '../lib/server/db';
 import {applyWalletMutationWithClient} from '../modules/member-wallet/server/postgres';
 import {resultParity} from '../lib/line/game-notices';
@@ -69,10 +70,17 @@ test('verified settlement credits once with wallet ledger and rejects unready ro
   assert.equal(await dispatchRoundResultLine(db,fetcher),null);
   await db.query('INSERT INTO round_reset_epochs(created_at) VALUES(now())');
   await assert.rejects(settleVerifiedRound(db,admin,String(round)),/round_not_found/);
+  await updateBusinessSetting('adminFeeRate','10');
   const fresh=await startManualRound(admin);assert.equal((await db.query('SELECT settlement_oa_id FROM rounds WHERE id=$1',[fresh.round.id])).rows[0].settlement_oa_id,oaId);
+  const savedRate=(await db.query('SELECT rate_numerator,rate_denominator FROM round_settlement_config WHERE round_id=$1',[fresh.round.id])).rows[0];
+  assert.equal(Number(savedRate.rate_numerator),1900000);
+  assert.equal(Number(savedRate.rate_denominator),1000000);
+  await updateBusinessSetting('adminFeeRate','20');
+  const unchangedRate=(await db.query('SELECT rate_numerator FROM round_settlement_config WHERE round_id=$1',[fresh.round.id])).rows[0];
+  assert.equal(Number(unchangedRate.rate_numerator),1900000);
   await db.query("UPDATE rounds SET opens_at=now()-interval '10 minutes',closes_at=now()-interval '5 minutes',status='SCANNING',closed_at=now()-interval '5 minutes',even_people=2,even_points=30 WHERE id=$1",[fresh.round.id]);
   for(const points of [10,20]){const key=randomUUID(),c=await db.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.member_id',$1,true)",[members[0]]);await applyWalletMutationWithClient(c,{memberId:members[0],type:'DEMO_USE',points,referenceId:`ROUND_${fresh.round.id}_${key}`,idempotencyKey:key,actor:'test',source:'round'});await c.query("INSERT INTO round_entries(round_id,member_id,side,demo_points,idempotency_key) VALUES($1,$2,'even',$3,$4)",[fresh.round.id,members[0],points,key]);await c.query('COMMIT')}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}
-  await db.query('INSERT INTO round_settlement_config(round_id,oa_id,rate_numerator,rate_denominator,configured_by) VALUES($1,$2,190,100,$3)',[fresh.round.id,oaId,admin]);
+
   const secondEvidence=(await db.query("INSERT INTO round_ocr_evidence(round_id,frame_id,source_type,captured_at,raw_ocr_text,normalized_text,confidence,original_sha256,crop_sha256,original_object_key,crop_object_key) VALUES($1,'frame-2','IP_CAMERA',now(),'4.60','4.60',99,repeat('c',64),repeat('d',64),'test/original-2','test/crop-2') RETURNING id",[fresh.round.id])).rows[0].id;
   await db.query("INSERT INTO round_ocr_verification_decisions(evidence_id,decision,actor) VALUES($1,'VERIFIED','test-admin')",[secondEvidence]);
   assert.equal((await settleVerifiedRound(db,admin,fresh.round.id)).awards,2);assert.equal(await balance(members[0]),1117);
