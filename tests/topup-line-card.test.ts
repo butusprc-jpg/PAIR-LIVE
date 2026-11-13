@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {confirmationCard,confirmationData,parsePostback,requestCard,reviewData,resultMessage,signedSlipUrl,validSlipLink} from '../lib/topup/line-card';
+import {confirmationCard,confirmationData,parsePostback,requestCard,reviewData,resultMessage,signedSlipUrl,statusCard,validSlipLink} from '../lib/topup/line-card';
 import {acceptedLineEvents,handleLineWebhook} from '../lib/line-webhook-core';
 import {createHmac} from 'node:crypto';
 const actor='U'+'a'.repeat(32),other='U'+'b'.repeat(32),id=randomUUID(),now=Date.now();
@@ -21,6 +21,7 @@ test('Flex card contains real request fields and signed image URL',()=>{
   assert.equal(primary?.[0]?.action.data,reviewData(id,'APPROVED'));assert.doesNotMatch(JSON.stringify(primary?.[0]?.action),/admin\/topup-review/);
   assert.equal(primary?.[0]?.action.displayText,undefined);
   assert.doesNotMatch(JSON.stringify(requestCard(row)),/quickReply/);
+  for(const status of ['APPROVED','REJECTED']){const result=statusCard({...row,status});assert.equal('footer' in result.contents,false);assert.doesNotMatch(JSON.stringify(result),/postback/)}
  const confirm=confirmationCard(row,'APPROVED',actor);assert.match(JSON.stringify(confirm),/ตรวจสลิปแล้ว ยืนยัน/);
   const token=confirmationData(id,'APPROVED',actor,now);
   assert.deepEqual(parsePostback(token,actor,now),{stage:'CONFIRM',decision:'APPROVED',id});

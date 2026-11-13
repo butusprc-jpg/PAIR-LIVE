@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
-import {parsePostback} from './line-card';
+import {parsePostback,statusCard} from './line-card';
 import {pushLine,verifiedLineAdmin} from './line-provider';
 import {decideTopup,TopupError,uuid} from './store';
 import {dispatchApprovedMemberLine,enqueueApprovedMemberLine} from './member-line-notify';
@@ -30,10 +30,12 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
     const previous=action.rows[0];
     const row=await currentRequest(c,previous.request_id);
     await c.query('COMMIT');committed=true;
-    const message=row&&['APPROVED','REJECTED'].includes(row.status)
-     ? {type:'text',text:`รายการนี้${row.status==='APPROVED'?'อนุมัติแล้ว':'ปฏิเสธแล้ว'} · ${row.points} แต้ม · ${row.displayName.slice(0,80)}`}
+    const terminal=row&&['APPROVED','REJECTED'].includes(row.status);
+    const message=terminal&&['APPROVED','REJECTED'].includes(previous.result)
+     ? statusCard(row)
+     : terminal?{type:'text',text:`รายการนี้${row.status==='APPROVED'?'อนุมัติแล้ว':'ปฏิเสธแล้ว'} · ${row.points} แต้ม · ${row.displayName.slice(0,80)}`}
      : {type:'text',text:'รายการนี้ยังรอตรวจสอบ กรุณาเปิดรายการล่าสุด'};
-    await pushLine(event.userId,[message],row&&['APPROVED','REJECTED'].includes(row.status)?`${event.webhookEventId}:status:${row.status}`:event.webhookEventId,options.fetch);
+    await pushLine(event.userId,[message],`${event.webhookEventId}:status`,options.fetch);
    }else{await c.query('COMMIT');committed=true}
    return {duplicate:true};
   }
@@ -78,10 +80,12 @@ export async function processTopupPostback(pool:Pool,event:PostbackEvent,options
   }
   if(result==='APPROVED'||result==='ALREADY_HANDLED')try{await dispatchApprovedMemberLine(pool,{fetch:options.fetch})}catch{/* Durable outbox retains the work for the retry worker. */}
   if(admin){
-   const message=row&&parsed?.decision&&['APPROVED','REJECTED','ALREADY_HANDLED'].includes(result)
-     ? {type:'text',text:`${result==='ALREADY_HANDLED'?'รายการนี้':''}${row.status==='APPROVED'?'✅ อนุมัติแล้ว':'❌ ปฏิเสธแล้ว'} · ${row.points} แต้ม · ${row.displayName.slice(0,80)}`}
+   const message=row&&['APPROVED','REJECTED'].includes(result)
+     ? statusCard(row)
+     : row&&parsed?.decision&&result==='ALREADY_HANDLED'
+     ? {type:'text',text:`รายการนี้${row.status==='APPROVED'?'อนุมัติแล้ว':'ปฏิเสธแล้ว'} · ${row.points} แต้ม · ${row.displayName.slice(0,80)}`}
      : {type:'text',text:result==='CANCELLED'?'ยกเลิกแล้ว':result==='NOT_FOUND'?'ไม่พบคำขอเติมแต้ม':result==='INVALID'?'ปุ่มไม่ถูกต้องหรือหมดอายุ กรุณาเปิดรายการใหม่':result.startsWith('BLOCKED_')?`อนุมัติไม่สำเร็จ: ${result.slice(8)}`:`ดำเนินการไม่สำเร็จ: ${result}`};
-   await pushLine(event.userId,[message],event.webhookEventId,options.fetch);
+   await pushLine(event.userId,[message],`${event.webhookEventId}:status`,options.fetch);
   }
   return {duplicate:false,result};
  }catch(error){
