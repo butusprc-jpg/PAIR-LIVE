@@ -20,6 +20,7 @@ test('manual start creates one PostgreSQL round from server time and rejects Aut
   assert.ok(Math.abs(Date.parse(round.opensAt)-Date.parse(new Date().toISOString()))<10_000);
   assert.equal((await currentRound()).round?.id,round.id);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM rounds")).rows[0].n,1);
+  assert.equal((await db.query('SELECT settlement_oa_id FROM rounds WHERE id=$1',[round.id])).rows[0].settlement_oa_id,(await db.query('SELECT id FROM oa_service_control WHERE line_oa_id=$1',[process.env.CONNECTED_LINE_OA_ID])).rows[0].id);
   const audit=await db.query("SELECT actor,details FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_OPENED'",[round.id]);
   assert.equal(audit.rows.length,1);assert.equal(audit.rows[0].actor,admin);assert.equal(audit.rows[0].details.mode,'manual');
   await db.query("UPDATE rounds SET status='SCANNING',closed_at=clock_timestamp() WHERE id=$1",[round.id]);

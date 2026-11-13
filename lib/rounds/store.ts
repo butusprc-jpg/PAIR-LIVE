@@ -27,8 +27,9 @@ async function assertConnectedOaInTransaction(client:PoolClient){
  const id=process.env.CONNECTED_LINE_OA_ID,token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
  if(!id||!token)throw new RoundError('oa_binding_unverified',503);
  const hash=createHash('sha256').update(token).digest('hex');
- const result=await client.query('SELECT enabled,expires_at>now() AS active,verified_token_hash FROM oa_service_control WHERE line_oa_id=$1 FOR SHARE',[id]);
+ const result=await client.query('SELECT id,enabled,expires_at>now() AS active,verified_token_hash FROM oa_service_control WHERE line_oa_id=$1 FOR SHARE',[id]);
  if(result.rowCount!==1||!result.rows[0].enabled||!result.rows[0].active||result.rows[0].verified_token_hash!==hash)throw new RoundError('oa_service_inactive',403);
+ return String(result.rows[0].id);
 }
 async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock_shared(74021602)');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
 async function dbNow(client:PoolClient){const result=await client.query('SELECT clock_timestamp() AS now');return new Date(result.rows[0].now).toISOString()}
@@ -71,14 +72,14 @@ export async function startManualRound(adminId:string){
  if(!/^[0-9a-f-]{36}$/i.test(adminId))throw new RoundError('invalid_admin_id',403);
  return inTransaction(async client=>{
   await client.query('SELECT pg_advisory_xact_lock(74021601)');
-  await assertConnectedOaInTransaction(client);
+  const oaId=await assertConnectedOaInTransaction(client);
   const current=await transition(client);
   if(current.round)throw new RoundError('round_already_active',409);
   const setting=await client.query('SELECT duration_minutes FROM round_settings WHERE id=1 FOR UPDATE');
   const duration=validateDuration(Number(setting.rows[0]?.duration_minutes??5));
   const rules=await readRules(client),business=await readBusinessSettings(client);
-  const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status)
-   SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN' FROM t RETURNING *`,[duration]);
+  const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,settlement_oa_id)
+   SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN',$2 FROM t RETURNING *`,[duration,oaId]);
   const round=mapRound(inserted.rows[0]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_OPENED',jsonb_build_object('duration_minutes',$3::int,'mode','manual'))",[round.id,adminId,duration]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
