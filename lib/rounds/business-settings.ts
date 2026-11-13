@@ -1,6 +1,7 @@
 import type {PoolClient} from 'pg';
 import {database} from '../server/db';
 import {RoundError} from './core';
+import {settlementRateFromAdminFee} from './admin-fee';
 
 export type ShopHours={open:string;close:string};
 export type BusinessSettings={sideDifferenceLimit:number|null;maxRoundPoints:number|null;minRoundPoints:number|null;adminFeeRate:string|null;shopHours:ShopHours|null};
@@ -14,7 +15,8 @@ function validateSetting(key:BusinessSettingKey,value:unknown){
  if(key==='sideDifferenceLimit'||key==='maxRoundPoints'||key==='minRoundPoints'){
   if(typeof value!=='number'||!Number.isSafeInteger(value)||value<(key==='sideDifferenceLimit'?0:1))throw new RoundError('invalid_business_setting');
  }else if(key==='adminFeeRate'){
-  if(typeof value!=='string'||!/^(?:0|[1-9]\d{0,8})(?:\.\d{1,4})?$/.test(value))throw new RoundError('invalid_business_setting');
+  if(typeof value!=='string')throw new RoundError('invalid_business_setting');
+  try{settlementRateFromAdminFee(value)}catch{throw new RoundError('invalid_business_setting')}
  }else if(key==='shopHours'){
   const hours=value as Partial<ShopHours>|null;
   if(!hours||!validTime(hours.open)||!validTime(hours.close)||hours.open===hours.close)throw new RoundError('invalid_business_setting');
