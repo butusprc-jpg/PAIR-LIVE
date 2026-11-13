@@ -33,8 +33,8 @@ export async function settleVerifiedRound(pool:Pool,adminId:string,roundId:strin
    await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);
    const rows=(await client.query("SELECT * FROM round_entries WHERE round_id=$1 AND member_id=$2 AND status='PENDING' ORDER BY id FOR UPDATE",[roundId,memberId])).rows;
    for(const entry of rows){entries++;
-    const bound=(await client.query("SELECT 1 FROM member_identities WHERE member_id=$1 AND provider='line' AND provider_channel_id=$2 LIMIT 1",[memberId,process.env.LINE_LOGIN_CHANNEL_ID])).rows[0];
-    if(!bound)throw new RoundError('entry_member_oa_mismatch',409);
+    const identities=(await client.query("SELECT provider_channel_id,provider_user_id FROM member_identities WHERE member_id=$1 AND provider='line' ORDER BY last_login_at DESC",[memberId])).rows;
+    if(identities.length&&!identities.some(identity=>identity.provider_channel_id===process.env.LINE_LOGIN_CHANNEL_ID))throw new RoundError('entry_member_oa_mismatch',409);
     const use=(await client.query("SELECT id,points FROM member_wallet_ledger WHERE member_id=$1 AND reference_id=$2 AND type='DEMO_USE'",[memberId,`ROUND_${roundId}_${entry.idempotency_key}`])).rows[0];
     if(!use||Number(use.points)!==Number(entry.demo_points))throw new RoundError('original_wallet_use_missing',409);
     const correct=entry.side.toUpperCase()===parity;
@@ -47,6 +47,9 @@ export async function settleVerifiedRound(pool:Pool,adminId:string,roundId:strin
     }
     const changed=await client.query('UPDATE round_entries SET status=$3 WHERE id=$1 AND member_id=$2 AND status=\'PENDING\' RETURNING id',[entry.id,memberId,correct?'CORRECT':'INCORRECT']);
     if(changed.rowCount!==1)throw new RoundError('settlement_state_conflict',409);
+    const recipient=identities.find(identity=>identity.provider_channel_id===process.env.LINE_LOGIN_CHANNEL_ID&&/^U[0-9a-f]{32}$/i.test(identity.provider_user_id))?.provider_user_id??null;
+    await client.query(`INSERT INTO round_result_line_outbox(entry_id,round_id,member_id,oa_id,recipient_user_id,status,last_error)
+      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(entry_id) DO NOTHING`,[entry.id,roundId,memberId,config.oa_id,recipient,recipient?'PENDING':'UNDELIVERABLE',recipient?null:'line_identity_missing']);
    }
   }
   await client.query("SELECT set_config('pair_live.member_id','',true)");

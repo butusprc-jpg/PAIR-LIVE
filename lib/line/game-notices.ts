@@ -18,16 +18,19 @@ export function resultNoticeText(notice:ResultNotice){
   if(!/^\d+$/.test(notice.roundId)||!Number.isSafeInteger(notice.stakePoints)||notice.stakePoints<1)throw new Error('invalid_result_notice');
   const actual=resultParity(notice.resultNumber);
   if((actual===notice.chosenSide)!==(notice.outcome==='CORRECT'))throw new Error('result_outcome_mismatch');
-  if(notice.outcome==='CORRECT'&&(notice.creditedPoints===undefined||notice.creditedPoints<notice.stakePoints))throw new Error('unconfirmed_payout');
+  if(notice.outcome==='CORRECT'&&(notice.creditedPoints===undefined||notice.creditedPoints<1))throw new Error('unconfirmed_payout');
+  if(notice.outcome==='INCORRECT'&&notice.creditedPoints!==undefined&&notice.creditedPoints!==0)throw new Error('unconfirmed_payout');
   const side=(value:'even'|'odd')=>value==='even'?'คู่':'คี่';
   return [
-    notice.outcome==='CORRECT'?'🎉 PAIR LIVE — ทายผลถูกต้อง!':'PAIR LIVE — ทายผลไม่ถูกต้อง!',
+    'PAIR LIVE — ผลการทาย',
     '',
+    notice.outcome==='CORRECT'?'ยินดีด้วย! คุณทายถูก':'ผลการทาย: ทายผิด',
     `รอบที่ ${notice.roundId}`,
     `ผลออกรางวัล: ${notice.resultNumber} (${side(actual)})`,
     `คุณทาย: ${side(notice.chosenSide)}`,
     `จำนวนที่ทาย: ${points(notice.stakePoints)} แต้ม`,
-    ...(notice.outcome==='CORRECT'?[ `รวมยอดทั้งหมด: ${points(notice.creditedPoints!)} แต้ม`]:[]),
+    notice.outcome==='CORRECT'?`แต้มที่ได้รับรวมทุน: ${points(notice.creditedPoints!)} แต้ม`:'แต้มที่ได้รับ: 0 แต้ม',
+    ...(notice.outcome==='CORRECT'?[`รวมยอดทั้งหมด: ${points(notice.creditedPoints!)} แต้ม`]:[]),
     `สถานะ: ${notice.outcome==='CORRECT'?'ทายถูก ✅':'ทายผิด ❌'}`
   ].join('\n');
 }
