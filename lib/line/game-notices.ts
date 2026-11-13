@@ -9,13 +9,13 @@ export type ResultNotice={
   creditedPoints?:number;
 };
 export function resultParity(resultNumber:string):'even'|'odd'{
-  if(!/^\\d+(?:\\.\\d+)?$/.test(resultNumber))throw new Error('invalid_result_number');
+  if(!/^\d+(?:\.\d+)?$/.test(resultNumber))throw new Error('invalid_result_number');
   const digit=resultNumber[resultNumber.length-1];
   return Number(digit)%2===0?'even':'odd';
 }
 function points(value:number){if(!Number.isSafeInteger(value)||value<0)throw new Error('invalid_points');return value.toLocaleString('th-TH')}
 export function resultNoticeText(notice:ResultNotice){
-  if(!/^\\d+$/.test(notice.roundId)||!Number.isSafeInteger(notice.stakePoints)||notice.stakePoints<1)throw new Error('invalid_result_notice');
+  if(!/^\d+$/.test(notice.roundId)||!Number.isSafeInteger(notice.stakePoints)||notice.stakePoints<1)throw new Error('invalid_result_notice');
   const actual=resultParity(notice.resultNumber);
   if((actual===notice.chosenSide)!==(notice.outcome==='CORRECT'))throw new Error('result_outcome_mismatch');
   if(notice.outcome==='CORRECT'&&(notice.creditedPoints===undefined||notice.creditedPoints<notice.stakePoints))throw new Error('unconfirmed_payout');
@@ -29,13 +29,13 @@ export function resultNoticeText(notice:ResultNotice){
     `จำนวนที่ทาย: ${points(notice.stakePoints)} แต้ม`,
     ...(notice.outcome==='CORRECT'?[ `รวมยอดทั้งหมด: ${points(notice.creditedPoints!)} แต้ม`]:[]),
     `สถานะ: ${notice.outcome==='CORRECT'?'ทายถูก ✅':'ทายผิด ❌'}`
-  ].join('\\n');
+  ].join('\n');
 }
 /** LINE Flex bubble; use only after an authenticated, committed settlement. */
 export function resultNoticeCard(notice:ResultNotice){
   const winning=notice.outcome==='CORRECT';
   const txt=resultNoticeText(notice);
-  const rows=txt.split('\\n').filter(Boolean);
+  const rows=txt.split('\n').filter(Boolean);
   return {
     type:'flex' as const,
     altText:winning?`PAIR LIVE ทายถูก รอบ ${notice.roundId}`:`PAIR LIVE ทายผิด รอบ ${notice.roundId}`,
