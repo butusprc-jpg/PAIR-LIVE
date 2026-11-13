@@ -40,6 +40,14 @@ jobs:
       - name: Topup, withdrawal, replay, rollback and RLS on PostgreSQL
         run: node --import tsx --test --test-concurrency=1 tests/topup.test.ts tests/withdrawal.test.ts tests/topup-line-card.test.ts tests/topup-ledger-lock.test.ts tests/wallet-round-db.integration.test.ts
       - name: PLAY rules and round entries on PostgreSQL
-        run: node --import tsx --test --test-concurrency=1 tests/play-rules-db.integration.test.ts tests/round-rules-db.integration.test.ts tests/round-db.integration.test.ts
+        run: |
+          node -e 'const {Client}=require("pg");(async()=>{const db=new Client({connectionString:process.env.DATABASE_URL});await db.connect();try{await db.query("INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES($1,$2,true,now()+interval '\''1 day'\'',$3)", ["@ci-v15-9-1","CI fixture","02ba88d44ba4338b8fd7b08f1f73b66753ee1df9dea329b7666fb0cfc4164077"])}finally{await db.end()}})().catch(e=>{console.error(e.message);process.exitCode=1})'
+          node --import tsx --test --test-concurrency=1 tests/play-rules-db.integration.test.ts tests/round-rules-db.integration.test.ts tests/round-db.integration.test.ts
+        env:
+          DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+          PAIR_ROUND_TEST_ISOLATED: '1'
+          PAIR_ROUND_RULES_TEST_ISOLATED: '1'
+          CONNECTED_LINE_OA_ID: '@ci-v15-9-1'
+          LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: synthetic-ci-token
       - run: npx tsc --noEmit
       - run: npm run build
