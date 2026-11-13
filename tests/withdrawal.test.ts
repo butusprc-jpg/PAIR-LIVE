@@ -133,7 +133,7 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    assert.equal(forbidden.result,'FORBIDDEN');assert.equal(await balance(),640);
    const concurrent=await createWithdrawal(db,member,25,'concurrent fixture',randomUUID(),recipients);
    const [c1,c2]=await Promise.all(['device-a','device-b'].map(webhookEventId=>processWithdrawalPostback(db!,{webhookEventId,userId:adminLine,data:`withdraw:v1:transfer:${concurrent.id}`},{allowlist,fetch:fakeFetch})));
-   assert.deepEqual([c1.replayed,c2.replayed].sort(),[false,true]);assert.equal(await balance(),615);
+   assert.deepEqual([('replayed' in c1&&c1.replayed),('replayed' in c2&&c2.replayed)].sort(),[false,true]);assert.equal(await balance(),615);
    assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_audit WHERE request_id=$1',[concurrent.id])).rows[0].n,1);
   }finally{
    if(oldLogin===undefined)delete process.env.LINE_LOGIN_CHANNEL_ID;else process.env.LINE_LOGIN_CHANNEL_ID=oldLogin;
