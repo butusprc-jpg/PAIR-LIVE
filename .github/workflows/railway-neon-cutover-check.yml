@@ -2,6 +2,8 @@ name: Railway Neon cutover regression
 on:
   push:
     branches: [feat/pair-live-v14-9-single-oa-railway]
+  pull_request:
+    branches: [feat/pair-live-v14-9-single-oa-railway]
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,5 +39,7 @@ jobs:
           node --import tsx scripts/migrate.ts --validate
       - name: Topup, withdrawal, replay, rollback and RLS on PostgreSQL
         run: node --import tsx --test --test-concurrency=1 tests/topup.test.ts tests/withdrawal.test.ts tests/topup-line-card.test.ts tests/topup-ledger-lock.test.ts tests/wallet-round-db.integration.test.ts
+      - name: PLAY rules and round entries on PostgreSQL
+        run: node --import tsx --test --test-concurrency=1 tests/play-rules-db.integration.test.ts tests/round-rules-db.integration.test.ts tests/round-db.integration.test.ts
       - run: npx tsc --noEmit
       - run: npm run build
