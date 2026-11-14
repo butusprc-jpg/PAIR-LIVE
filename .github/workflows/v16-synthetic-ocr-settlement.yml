@@ -1,0 +1,49 @@
+name: V16 synthetic OCR wallet settlement verification
+on:
+  push:
+    branches: [feat/pair-live-v16-line-result-cards]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-ocr-settlement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      V16_ROUND_BUTTON_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      VDO_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      SETTLEMENT_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: OCR parity and admin-fee unit tests
+        run: node --import tsx --test tests/round-core.test.ts tests/game-notices.test.ts tests/v16-preview-target.test.ts tests/v16-live-notification-ui.test.ts
+      - name: Bootstrap isolated PostgreSQL migration baseline
+        run: npm run db:migrate -- --apply
+      - name: Camera LIVE start stop and OA isolation with isolated PostgreSQL
+        run: node --import tsx --test modules/external-live/tests/cameras-db.integration.test.ts
+      - name: Admin round start stop cancel reopen with isolated PostgreSQL
+        run: node --import tsx --test tests/v16-round-buttons.test.ts
+      - name: PostgreSQL synthetic OCR, debit, award, duplicate and rollback tests
+        run: node --import tsx --test tests/round-settlement-db.integration.test.ts
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Production build (no deployment)
+        run: npm run build

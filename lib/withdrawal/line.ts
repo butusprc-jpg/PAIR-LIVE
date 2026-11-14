@@ -19,10 +19,19 @@ export function withdrawalCard(row:{request_id:string;display_name:string;reques
    {type:'text',text:'ตรวจข้อมูลและจ่ายแต้มให้สมาชิกก่อนกดยืนยัน',size:'sm',wrap:true}
   ]},
   footer:{type:'box',layout:'vertical',spacing:'sm',contents:[
-   {type:'button',style:'primary',color:'#1763DC',action:{type:'postback',label:'✅ ยืนยันจ่ายแต้มแล้ว',data:`withdraw:v1:transfer:${row.request_id}`}},
+   {type:'button',style:'primary',color:'#1763DC',action:{type:'postback',label:'ยืนยันโอนแล้ว',data:`withdraw:v1:transfer:${row.request_id}`}},
    {type:'button',style:'secondary',action:{type:'postback',label:'❌ ปฏิเสธ',data:`withdraw:v1:reject:${row.request_id}`}}
   ]}
  }};
+}
+export function withdrawalStatusCard(row:{request_id:string;requested_points:number;status:'TRANSFERRED'|'REJECTED'}){
+ const label=row.status==='TRANSFERRED'?'โอนเรียบร้อยแล้ว':'ปฏิเสธแล้ว';
+ return {type:'flex',altText:`PAIR LIVE · ถอนแต้ม${label}`,contents:{type:'bubble',size:'mega',body:{type:'box',layout:'vertical',spacing:'md',contents:[
+  {type:'text',text:`PAIR LIVE — ${label}`,weight:'bold',size:'lg',wrap:true},
+  {type:'text',text:`ถอน: ${row.requested_points.toLocaleString('th-TH')} แต้ม`,wrap:true},
+  {type:'text',text:`เลขคำขอ: ${row.request_id}`,size:'xs',wrap:true},
+  {type:'text',text:`สถานะ: ${label}`,wrap:true}
+ ]}}};
 }
 export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch}={}){
  const rows=await scoped(pool,async c=>(await c.query<QueueRow>(`
@@ -68,7 +77,7 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
  try{admin=await verifiedLineAdmin(pool,event.userId,opts.allowlist)}catch(error){console.error('withdrawal_postback_failed',{step,code:error instanceof TopupError?error.code:'server_error',requestId:match[2],adminAuthorized:false,rlsAdminContext});throw error}
  if(!admin){console.error('withdrawal_postback_failed',{step,code:'admin_forbidden',requestId:match[2],adminAuthorized:false,rlsAdminContext});await pushLine(event.userId,[{type:'text',text:'ไม่มีสิทธิ์ดำเนินการถอนแต้ม กรุณาตรวจบัญชีแอดมิน LINE'}],event.webhookEventId+':forbidden',opts.fetch);return {result:'FORBIDDEN'}}
  const decision=match[1]==='transfer'?'TRANSFERRED':'REJECTED';
- let outcome:{result:string;replayed:boolean;points:number;debit_timing:string};
+ let outcome:{result:string;replayed:boolean;redelivery:boolean;points:number;debit_timing:string};
  try{
   outcome=await scoped(pool,async c=>{
    step='webhook_event';
@@ -80,7 +89,7 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
     step='replay_lookup';
     const previous=await c.query('SELECT r.status,r.requested_points,r.debit_timing,p.result FROM member_withdrawal_postbacks p JOIN member_withdrawal_requests r ON r.id=p.request_id WHERE p.event_id=$1',[event.webhookEventId]);
     if(!previous.rows[0])throw new TopupError('webhook_event_conflict',409);
-    return {result:previous.rows[0].result,replayed:true,points:previous.rows[0].requested_points,debit_timing:previous.rows[0].debit_timing};
+    return {result:previous.rows[0].result,replayed:true,redelivery:true,points:previous.rows[0].requested_points,debit_timing:previous.rows[0].debit_timing};
    }
    let row:Awaited<ReturnType<typeof decideWithdrawalWithClient>>|null=null;
    let result:string;
@@ -95,7 +104,7 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
    step='postback_record';
    await c.query('INSERT INTO member_withdrawal_postbacks(event_id,request_id,result) VALUES($1,$2,$3)',[event.webhookEventId,current.id,result]);
    await c.query("UPDATE line_webhook_events SET processing_status='PROCESSED',processed_at=now() WHERE event_id=$1",[event.webhookEventId]);
-   return {result,replayed:!!row?.replayed,points:current.requested_points,debit_timing:current.debit_timing};
+   return {result,replayed:!!row?.replayed,redelivery:false,points:current.requested_points,debit_timing:current.debit_timing};
   });
  }catch(error){
   const code=error instanceof TopupError?error.code:'server_error';
@@ -107,10 +116,12 @@ export async function processWithdrawalPostback(pool:Pool,event:{webhookEventId:
   throw error;
  }
  if(outcome.result==='TRANSFERRED'||outcome.result==='REJECTED')try{await dispatchWithdrawalLine(pool,{fetch:opts.fetch})}catch(error){console.error('withdraw_notification_dispatch_failed',error instanceof Error?error.message:'unknown')}
- const message=outcome.result==='BLOCKED_INSUFFICIENT'?'ยอดแต้มไม่พอ ยังไม่อนุมัติถอนแต้ม':
-  outcome.replayed?`รายการนี้ดำเนินการแล้ว · ${outcome.result} · ${outcome.points} แต้ม`:
-  outcome.result==='TRANSFERRED'?`✅ ยืนยันจ่ายแต้มแล้ว · ${outcome.points} แต้ม`:
-  outcome.debit_timing==='PREDEBIT'?`❌ ปฏิเสธและคืน ${outcome.points} แต้มแล้ว`:`❌ ปฏิเสธคำขอถอน ${outcome.points} แต้มแล้ว`;
- try{await pushLine(event.userId,[{type:'text',text:message}],event.webhookEventId,opts.fetch)}catch(error){console.error('withdrawal_postback_failed',{step:'admin_reply',code:error instanceof TopupError?error.code:'server_error',requestId:match[2],adminAuthorized:true,rlsAdminContext});throw error}
+ const terminal=outcome.result==='TRANSFERRED'||outcome.result==='REJECTED';
+ const message=terminal&&(!outcome.replayed||outcome.redelivery)
+  ? withdrawalStatusCard({request_id:match[2],requested_points:outcome.points,status:outcome.result as 'TRANSFERRED'|'REJECTED'})
+  :{type:'text',text:outcome.result==='BLOCKED_INSUFFICIENT'?'ยอดแต้มไม่พอ ยังไม่อนุมัติถอนแต้ม':
+   outcome.result==='TRANSFERRED'?'รายการนี้โอนเรียบร้อยแล้ว':
+   outcome.result==='REJECTED'?'รายการนี้ถูกปฏิเสธแล้ว':`รายการนี้ดำเนินการแล้ว · ${outcome.result}`};
+ try{await pushLine(event.userId,[message],`${event.webhookEventId}:status`,opts.fetch)}catch(error){console.error('withdrawal_postback_failed',{step:'admin_reply',code:error instanceof TopupError?error.code:'server_error',requestId:match[2],adminAuthorized:true,rlsAdminContext});throw error}
  return outcome;
 }

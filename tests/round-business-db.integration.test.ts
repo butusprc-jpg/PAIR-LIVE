@@ -44,6 +44,9 @@ test('business settings are persisted, next-round only, and cap concurrent entri
   await db.query("UPDATE rounds SET status='SETTLED',settled_at=clock_timestamp() WHERE id=$1",[first.id]);
   assert.equal((await tickRoundEngine()).round,null);
   await updateBusinessSetting('shopHours',null);
+  // This isolated legacy-business fixture has no authenticated admin identity;
+  // keep the fee validation assertion above but do not create a settlement config here.
+  await updateBusinessSetting('adminFeeRate',null);
   const second=(await startManualRound('00000000-0000-4000-8000-000000000001')).round;
   assert.notEqual(second.id,first.id);
   assert.equal((await businessSettingsOverview()).currentRound?.minRoundPoints,9);

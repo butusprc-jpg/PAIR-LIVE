@@ -96,13 +96,15 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[pending.id])).rows[0].n,1);
   assert.equal(seen.filter(x=>x.to===memberLine&&x.text.includes('500 แต้ม')).length,1);
   assert.ok(seen.some(x=>x.to===adminA&&x.text.includes('อนุมัติแล้ว')));
+  assert.ok(seen.some(x=>(x.to===adminA||x.to===adminB)&&x.text.includes('"type":"flex"')&&x.text.includes('อนุมัติแล้ว')));
   assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[pending.id])).rows[0].status,'SENT');
   assert.equal((await run('review-synthetic',adminA,`topup:v2:review:APPROVED:${pending.id}`)).duplicate,true);
   assert.ok(seen.at(-1)?.text.includes('อนุมัติแล้ว'),'replayed webhook must read the approved row under admin RLS');
   assert.equal((await run('review-stale',adminA,`topup:v2:review:APPROVED:${pending.id}`)).result,'ALREADY_HANDLED');
+  for(let i=0;i<5;i++){assert.equal((await run(`review-stale-${i}`,adminA,`topup:v2:review:APPROVED:${pending.id}`)).result,'ALREADY_HANDLED');assert.ok(seen.at(-1)?.text.includes('รายการนี้อนุมัติแล้ว'))}
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,600);
   assert.equal(seen.filter(x=>x.to===memberLine&&x.text.includes('500 แต้ม')).length,1);
-  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_chat_actions WHERE request_id=$1',[pending.id])).rows[0].n,3);
+  assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_chat_actions WHERE request_id=$1',[pending.id])).rows[0].n,8);
   assert.equal((await db.query("SELECT count(*)::int n FROM member_topup_chat_actions WHERE event_id='denied-synthetic' AND request_id IS NULL AND stage='DENIED'")).rows[0].n,1);
   await assert.rejects(db.query('UPDATE member_topup_chat_actions SET result=$1 WHERE event_id=$2',['fake','review-synthetic']),/topup_immutable/);
   assert.ok(realAdmins.length===2);

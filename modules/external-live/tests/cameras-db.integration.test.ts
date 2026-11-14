@@ -34,12 +34,22 @@ test('V15 four cameras retain stable IDs, isolate OA, enforce RLS, and reject sl
   assert.equal((await readCameraSite(db,'camera-channel-A')).cameras.some(c=>c.slot===1),false);
   await assert.rejects(primaryCameraAction(db,'camera-channel-A','admin-a',{cameraId:primary.cameraId,revision:saved.cameras[0].revision,action:'save',url:'https://evil.example/?view=new_main_123'}),/invalid_viewer_url/);
   assert.equal((await db.query('SELECT stream_id FROM vdo_ninja_tenants WHERE oa_id=$1',[ids[0]])).rows[0].stream_id,'new_main_123');
+  // Opted-in synthetic member confirms the real primary-camera button uses V16 outbox.
+  const member=(await db.query("INSERT INTO members(display_name,demo_points) VALUES('primary LIVE notice fixture',100) RETURNING id")).rows[0].id;
+  await db.query("INSERT INTO member_identities(member_id,provider,provider_channel_id,provider_user_id) VALUES($1,'line',$2,$3)",[member,'camera-channel-A','U'+'a'.repeat(32)]);
+  await db.query('INSERT INTO member_countdown_line_preferences(member_id,enabled) VALUES($1,true)',[member]);
   const live=await primaryCameraAction(db,'camera-channel-A','admin-a',{cameraId:primary.cameraId,revision:saved.cameras[0].revision,action:'start'});
   assert.equal(live.cameras[0].displayEnabled,true);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM live_start_line_events WHERE oa_id=$1',[ids[0]])).rows[0].n,1);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM live_start_line_outbox WHERE oa_id=$1 AND member_id=$2',[ids[0],member])).rows[0].n,1);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM live_start_line_outbox WHERE oa_id=$1',[ids[1]])).rows[0].n,0);
+
   assert.equal((await readCameraSite(db,'camera-channel-A')).cameras.find(c=>c.slot===1)?.viewerUrl,'https://vdo.ninja/?view=new_main_123');
   await assert.rejects(primaryCameraAction(db,'camera-channel-A','admin-a',{cameraId:primary.cameraId,revision:saved.cameras[0].revision,action:'start'}),/camera_conflict/);
   const hidden=await primaryCameraAction(db,'camera-channel-A','admin-a',{cameraId:primary.cameraId,revision:live.cameras[0].revision,action:'stop'});
   assert.equal(hidden.cameras[0].displayEnabled,false);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM live_start_line_outbox WHERE member_id=$1',[member])).rows[0].n,1);
+
   assert.equal((await db.query('SELECT count(*)::int AS count FROM vdo_ninja_audit WHERE oa_id=$1',[ids[0]])).rows[0].count,4);
   assert.equal((await db.query('SELECT stream_id FROM vdo_ninja_tenants WHERE oa_id=$1',[ids[0]])).rows[0].stream_id,'new_main_123');
   await assert.rejects(db.query('INSERT INTO site_cameras(site_id,oa_id,slot,name) VALUES($1,$2,5,$3)',[first.site?.siteId,ids[0],'fifth']),/site_cameras_slot_check/);

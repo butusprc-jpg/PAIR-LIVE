@@ -26,7 +26,12 @@ export async function readCameraSite(db:Pool,channel:string,admin=false){
   return publicCamera(effective,!!enabled,admin);
  });
  const visible=list.filter(x=>x.displayEnabled);
- return {site:site?{siteId:site.site_id,name:site.name,country:site.country}:null,cameras:admin?list.map(x=>({...x,publisherUrl:x.slot!==1&&x.sourceKind==='VDO_NINJA'&&cameras.find(c=>c.camera_id===x.cameraId)?.stream_id?`https://vdo.ninja/?push=${encodeURIComponent(cameras.find(c=>c.camera_id===x.cameraId)!.stream_id!)}`:null})):visible,layout:cameraLayout(visible.length)};
+ const lineNoticeRecipients=admin?(await db.query<{count:number}>(`SELECT count(DISTINCT p.member_id)::int AS count
+  FROM member_countdown_line_preferences p
+  JOIN members m ON m.id=p.member_id AND m.status='active'
+  JOIN member_identities i ON i.member_id=p.member_id AND i.provider='line' AND i.provider_channel_id=$1
+  WHERE p.enabled=true AND length(i.provider_user_id)=33 AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}'`,[channel])).rows[0]?.count??0:null;
+ return {site:site?{siteId:site.site_id,name:site.name,country:site.country}:null,cameras:admin?list.map(x=>({...x,publisherUrl:x.slot!==1&&x.sourceKind==='VDO_NINJA'&&cameras.find(c=>c.camera_id===x.cameraId)?.stream_id?`https://vdo.ninja/?push=${encodeURIComponent(cameras.find(c=>c.camera_id===x.cameraId)!.stream_id!)}`:null})):visible,layout:cameraLayout(visible.length),lineNoticeRecipients};
 }
 export async function provisionCameraSite(db:Pool,channel:string){
  const tenant=await resolveVdoTenant(db,channel);const client=await db.connect();
@@ -62,6 +67,18 @@ export async function primaryCameraAction(db:Pool,channel:string,actor:string,in
   if(input.action==='save'||enabled!==previous.display_enabled){
    const updated=(await client.query<{stream_id:string;display_enabled:boolean;revision:string}>('UPDATE vdo_ninja_tenants SET stream_id=$2,display_enabled=$3,remote_key_ciphertext=CASE WHEN $4 THEN NULL ELSE remote_key_ciphertext END,revision=revision+1,updated_at=now(),updated_by=$5 WHERE oa_id=$1 RETURNING stream_id,display_enabled,revision',[tenant.id,nextStream,enabled,input.action==='save',actor])).rows[0];
    await client.query('INSERT INTO vdo_ninja_audit(oa_id,revision,actor,action,before_state,after_state) VALUES($1,$2,$3,$4,$5,$6)',[tenant.id,updated.revision,actor,input.action==='stop'?'STOP':input.action==='start'?'START':'CONNECT',JSON.stringify(previous),JSON.stringify(updated)]);
+   if(input.action==='start'&&!previous.display_enabled){
+    const event=(await client.query<{id:string}>('INSERT INTO live_start_line_events(oa_id,live_revision,shop_name) VALUES($1,$2,$3) ON CONFLICT(oa_id,live_revision) DO NOTHING RETURNING id',[tenant.id,updated.revision,tenant.shop_name])).rows[0];
+    if(event){
+     await client.query("SELECT set_config('pair_live.countdown_dispatch','true',true)");
+     await client.query(`INSERT INTO live_start_line_outbox(event_id,member_id,oa_id,recipient_user_id)
+      SELECT $1,p.member_id,$2,i.provider_user_id FROM member_countdown_line_preferences p
+      JOIN members m ON m.id=p.member_id AND m.status='active'
+      JOIN LATERAL (SELECT provider_user_id FROM member_identities WHERE member_id=p.member_id AND provider='line' AND provider_channel_id=$3 ORDER BY last_login_at DESC LIMIT 1) i ON true
+      WHERE p.enabled=true AND length(i.provider_user_id)=33 AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}'
+      ON CONFLICT DO NOTHING`,[event.id,tenant.id,channel]);
+    }
+   }
   }
   await client.query('UPDATE site_cameras SET stream_id=$4,display_enabled=$5,revision=revision+1,updated_at=now(),updated_by=$6 WHERE camera_id=$1 AND oa_id=$2 AND site_id=$3',[row.camera_id,tenant.id,site.site_id,nextStream,enabled,actor]);
  },input.action==='stop');
