@@ -1,10 +1,43 @@
+import {spawn} from 'node:child_process';
 import type {Frame,OcrAdapter,OcrReading,Roi} from './core';
-// ImageMagick's stdin is passed through a temporary-free child process, never through a shell.
-async function imageCommand(input:Buffer,args:string[]){const {spawn}=await import('node:child_process');return new Promise<Buffer>((resolve,reject)=>{const child=spawn(process.platform==='win32'?'magick':'convert',['-',...args,'png:-']);const chunks:Buffer[]=[];const errors:Buffer[]=[];child.stdout.on('data',(b:Buffer)=>chunks.push(b));child.stderr.on('data',(b:Buffer)=>errors.push(b));child.on('error',reject);child.on('close',code=>code===0?resolve(Buffer.concat(chunks)):reject(new Error(`image_processing_failed:${Buffer.concat(errors).toString('utf8').slice(0,200)}`)));child.stdin.end(input)})}
-async function tesseract(image:Buffer){const {spawn}=await import('node:child_process');return new Promise<{text:string;confidence:number}>((resolve,reject)=>{const child=spawn('tesseract',['stdin','stdout','--psm','7','-l','eng','-c','tessedit_char_whitelist=0123456789.','tsv']);const chunks:Buffer[]=[];child.stdout.on('data',(b:Buffer)=>chunks.push(b));child.on('error',reject);child.on('close',code=>{if(code!==0)return reject(new Error('ocr_engine_failed'));const lines=Buffer.concat(chunks).toString().trim().split('\n').slice(1).map(x=>x.split('\t'));const words=lines.filter(x=>x.length>=12&&Number(x[10])>=0&&x[11]?.trim());resolve({text:words.map(x=>x[11].trim()).join(' '),confidence:words.length?Math.min(...words.map(x=>Number(x[10]))):0})});child.stdin.end(image)})}
-export class TesseractOcrAdapter implements OcrAdapter{
- async read(frame:Frame,roi:Roi):Promise<OcrReading>{if(roi.x<0||roi.y<0||roi.width<1||roi.height<1||roi.x+roi.width>frame.width||roi.y+roi.height>frame.height)throw new Error('invalid_roi');const crop=await imageCommand(frame.image,['-crop',`${roi.width}x${roi.height}+${roi.x}+${roi.y}`,'+repage']);const gray=await imageCommand(crop,['-colorspace','Gray','-contrast-stretch','1%x1%','-despeckle']);const result=await tesseract(gray);const rawText=result.text;const normalizedText=rawText.trim();const metrics=await imageMetrics(crop);return {frame,rawText,normalizedText,confidence:result.confidence,blurScore:metrics.blurScore,glareFraction:metrics.glareFraction,crop};}
-}
 
-async function scalarMetric(image:Buffer,args:string[]){const {spawn}=await import('node:child_process');return new Promise<number>((resolve,reject)=>{const child=spawn(process.platform==='win32'?'magick':'convert',['-',...args,'-format','%[fx:mean]','info:']);const chunks:Buffer[]=[];child.stdout.on('data',(b:Buffer)=>chunks.push(b));child.on('error',reject);child.on('close',code=>{if(code!==0)return reject(new Error('image_metrics_failed'));resolve(Number(Buffer.concat(chunks).toString().trim())||0)});child.stdin.end(image)})}
-async function imageMetrics(image:Buffer){const [edgeEnergy,glareFraction]=await Promise.all([scalarMetric(image,['-colorspace','Gray','-morphology','Convolve','Laplacian:0']),scalarMetric(image,['-colorspace','Gray','-threshold','95%'])]);return {blurScore:edgeEnergy*100,glareFraction}}
+const MAX_INPUT=5*1024*1024,MAX_OUTPUT=5*1024*1024,PROCESS_TIMEOUT_MS=5000;
+function runBounded(binary:string,args:string[],input:Buffer,outputLimit=MAX_OUTPUT):Promise<Buffer>{
+ if(input.length>MAX_INPUT)throw new Error('ocr_input_too_large');
+ return new Promise((resolve,reject)=>{
+  const child=spawn(binary,args,{env:{...process.env,OMP_THREAD_LIMIT:'1'},stdio:['pipe','pipe','pipe']});
+  const chunks:Buffer[]=[];let size=0,done=false;
+  const finish=(error?:Error)=>{if(done)return;done=true;clearTimeout(timer);if(error)reject(error);else resolve(Buffer.concat(chunks))};
+  const timer=setTimeout(()=>{child.kill('SIGKILL');finish(new Error('ocr_process_timeout'))},PROCESS_TIMEOUT_MS);
+  child.stdout.on('data',(part:Buffer)=>{size+=part.length;if(size>outputLimit){child.kill('SIGKILL');finish(new Error('ocr_output_too_large'))}else chunks.push(part)});
+  child.stderr.on('data',()=>{});
+  child.on('error',()=>finish(new Error('ocr_process_unavailable')));
+  child.on('close',code=>finish(code===0?undefined:new Error('ocr_process_failed')));
+  child.stdin.on('error',()=>{});child.stdin.end(input);
+ });
+}
+const convertBinary=process.platform==='win32'?'magick':'convert';
+async function imageCommand(input:Buffer,args:string[]){return runBounded(convertBinary,['-limit','memory','128MiB','-limit','map','256MiB','-limit','time','5','-',...args,'png:-'],input)}
+async function scalarMetric(image:Buffer,args:string[]){const output=await runBounded(convertBinary,['-limit','memory','128MiB','-limit','map','256MiB','-limit','time','5','-',...args,'-format','%[fx:mean]','info:'],image,1024);const value=Number(output.toString().trim());if(!Number.isFinite(value))throw new Error('image_metrics_failed');return value}
+async function tesseract(image:Buffer){
+ const output=await runBounded('tesseract',['stdin','stdout','--psm','7','-l','eng','-c','tessedit_char_whitelist=0123456789.','tsv'],image,256*1024);
+ const lines=output.toString().trim().split('\n').slice(1).map(x=>x.split('\t'));
+ const words=lines.filter(x=>x.length>=12&&Number(x[10])>=0&&x[11]?.trim());
+ return {text:words.map(x=>x[11].trim()).join(' '),confidence:words.length?Math.min(...words.map(x=>Number(x[10]))):0};
+}
+async function imageMetrics(image:Buffer){const [edgeEnergy,brightFraction]=await Promise.all([scalarMetric(image,['-colorspace','Gray','-morphology','Convolve','Laplacian:0']),scalarMetric(image,['-colorspace','Gray','-threshold','95%'])]);
+ // A mostly white sheet is the intended display surface, not a specular highlight.
+ // OCR confidence and edge energy still reject a washed-out all-white frame.
+ return {blurScore:edgeEnergy*100,glareFraction:brightFraction>.85?0:brightFraction}}
+
+/** Camera-independent OCR: only the server-selected ROI reaches the engine. */
+export class TesseractOcrAdapter implements OcrAdapter{
+ async read(frame:Frame,roi:Roi):Promise<OcrReading>{
+  if(!Number.isSafeInteger(frame.width)||!Number.isSafeInteger(frame.height)||frame.width*frame.height>2_000_000||frame.image.length>MAX_INPUT)throw new Error('ocr_frame_too_large');
+  if(![roi.x,roi.y,roi.width,roi.height].every(Number.isSafeInteger)||roi.x<0||roi.y<0||roi.width<1||roi.height<1||roi.x+roi.width>frame.width||roi.y+roi.height>frame.height)throw new Error('invalid_roi');
+  const crop=await imageCommand(frame.image,['-crop',`${roi.width}x${roi.height}+${roi.x}+${roi.y}`,'+repage']);
+  const gray=await imageCommand(crop,['-colorspace','Gray','-contrast-stretch','1%x1%','-despeckle']);
+  const result=await tesseract(gray),metrics=await imageMetrics(crop);
+  return {frame,rawText:result.text,normalizedText:result.text.trim(),confidence:result.confidence,blurScore:metrics.blurScore,glareFraction:metrics.glareFraction,crop};
+ }
+}

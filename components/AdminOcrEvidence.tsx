@@ -1,0 +1,24 @@
+'use client';
+import {useEffect,useState} from 'react';
+
+type Image={id:string;roundId:string;capturedAt:string;number:string;lastDigit:string;parity:'EVEN'|'ODD';confidence:number;status:'AVAILABLE'|'DELETING'|'DELETED';originalSha256:string;cropSha256:string};
+export default function AdminOcrEvidence({role}:{role:'admin'|'operator'|'viewer'}){
+ const [roundId,setRoundId]=useState(''),[images,setImages]=useState<Image[]>([]),[selected,setSelected]=useState<string[]>([]),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+ async function load(filter=roundId,preserveMessage=false){setBusy(true);try{const query=filter?`?roundId=${encodeURIComponent(filter)}`:'';const response=await fetch(`/api/admin/ocr-evidence${query}`,{cache:'no-store',credentials:'same-origin'});const data=await response.json();if(!response.ok)throw Error(data.error||'evidence_unavailable');setImages(data.images);setSelected([]);if(!preserveMessage)setMessage('')}catch(error){setMessage(error instanceof Error?error.message:'อ่านหลักฐานไม่ได้')}finally{setBusy(false)}}
+ useEffect(()=>{void load('')},[]);// eslint-disable-line react-hooks/exhaustive-deps
+ function toggle(id:string){setSelected(prior=>prior.includes(id)?prior.filter(value=>value!==id):[...prior,id])}
+ async function remove(ids:string[]){if(role!=='admin'||!ids.length||busy)return;if(!window.confirm(`ยืนยันลบภาพหลักฐาน ${ids.length} รายการ? ผลรอบและประวัติจะยังอยู่`))return;
+  setBusy(true);setMessage('');try{const challengeResponse=await fetch('/api/admin/auth/challenge',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose:'mutation'})});const challenge=await challengeResponse.json();if(!challengeResponse.ok)throw Error(challenge.error||'csrf_unavailable');
+   const response=await fetch('/api/admin/ocr-evidence',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Admin-CSRF':challenge.csrfToken},body:JSON.stringify({ids})});const result=await response.json();if(!response.ok)throw Error(result.error||'evidence_delete_failed');setMessage(result.results.some((item:{status:string})=>item.status==='DELETING')?'บางภาพกำลังลบ กรุณาลองตรวจอีกครั้ง':'ภาพหลักฐานถูกลบแล้ว');setSelected([]);
+  }catch(error){setMessage(error instanceof Error?error.message:'ลบภาพไม่สำเร็จ ภาพยังไม่ถูกยืนยันว่าลบแล้ว')}finally{await load(roundId,true)}}
+ return <section className="card admin-ocr-evidence" aria-label="หลักฐานผล OCR"><h2>หลักฐานผล OCR</h2><p className="muted">ภาพจากกล้องที่เซิร์ฟเวอร์จับหลังเลขนิ่ง 3 วินาที ยังไม่ใช่ผล Settlement</p>
+  <form onSubmit={event=>{event.preventDefault();void load()}}><label>ค้นหาหมายเลขรอบ<input className="field" inputMode="numeric" pattern="[0-9]*" value={roundId} onChange={event=>setRoundId(event.target.value)} placeholder="ทุกรอบ"/></label><button className="secondary" disabled={busy} type="submit">ค้นหา</button></form>
+  {role==='admin'&&selected.length>0&&<button className="secondary" type="button" disabled={busy} onClick={()=>void remove(selected)}>ลบที่เลือก ({selected.length})</button>}
+  {message&&<p role="status">{message}</p>}
+  {!images.length?<p className="muted">ยังไม่มีภาพหลักฐาน</p>:<div className="admin-ocr-evidence-list">{images.map(item=><article key={item.id} className="admin-ocr-evidence-item"><div><strong>รอบ #{item.roundId}</strong> · {new Date(item.capturedAt).toLocaleString('th-TH',{timeZone:'Asia/Bangkok'})}</div><p>เลข {item.number} · หลักท้าย {item.lastDigit} · {item.parity==='EVEN'?'คู่':'คี่'} · ความมั่นใจ {item.confidence}%</p><p className="muted">{item.status==='DELETED'?'ภาพหลักฐานถูกลบแล้ว':item.status==='DELETING'?'กำลังลบหรือรอลองใหม่':'ภาพพร้อมดู'}</p>
+   {item.status==='AVAILABLE'&&<div className="admin-ocr-evidence-pictures"><a href={`/api/admin/ocr-evidence/image?id=${encodeURIComponent(item.id)}&kind=full`} target="_blank" rel="noopener noreferrer"><img src={`/api/admin/ocr-evidence/image?id=${encodeURIComponent(item.id)}&kind=full`} alt={`ภาพเต็มรอบ ${item.roundId}`}/>ดูภาพเต็ม</a><a href={`/api/admin/ocr-evidence/image?id=${encodeURIComponent(item.id)}&kind=crop`} target="_blank" rel="noopener noreferrer"><img src={`/api/admin/ocr-evidence/image?id=${encodeURIComponent(item.id)}&kind=crop`} alt={`ภาพ Crop รอบ ${item.roundId}`}/>ดูภาพ Crop</a></div>}
+   {role==='admin'&&item.status==='AVAILABLE'&&<div className="admin-ocr-evidence-actions"><label><input type="checkbox" checked={selected.includes(item.id)} onChange={()=>toggle(item.id)}/> เลือกภาพ</label><button className="secondary" type="button" disabled={busy} onClick={()=>void remove([item.id])}>ลบภาพนี้</button></div>}
+   {role==='admin'&&item.status==='DELETING'&&<button className="secondary" type="button" disabled={busy} onClick={()=>void remove([item.id])}>ลองลบอีกครั้ง</button>}
+  </article>)}</div>}
+ </section>
+}
