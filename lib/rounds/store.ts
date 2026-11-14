@@ -23,7 +23,7 @@ async function appliedRules(client:PoolClient,roundId:string):Promise<RoundRules
  const result=await client.query("SELECT details FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_RULES_APPLIED' ORDER BY id DESC LIMIT 1",[roundId]);
  return result.rows[0]?.details??defaultRules;
 }
-async function mapRoundWithRules(client:PoolClient,row:Record<string,unknown>){const round=mapRound(row);return {...round,alertBeforeClose:(await appliedRules(client,round.id)).alertBeforeClose}}
+async function mapRoundWithRules(client:PoolClient,row:Record<string,unknown>){const round=mapRound(row),rules=await appliedRules(client,round.id);return {...round,alertBeforeClose:rules.alertBeforeClose,minEntryPoints:rules.minEntryPoints,maxEntryPoints:rules.maxEntryPoints}}
 async function assertConnectedOaInTransaction(client:PoolClient){
  const id=process.env.CONNECTED_LINE_OA_ID,token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
  if(!id||!token)throw new RoundError('oa_binding_unverified',503);
