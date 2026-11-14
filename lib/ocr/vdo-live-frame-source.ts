@@ -26,7 +26,7 @@ export class VdoLiveFrameSource implements LiveFrameSource{
   if(!this.page||!this.camera)throw new Error('live_camera_unavailable');
   const frame=await captureDecodedVideo(this.page,this.lastPresentedFrame);
   this.lastPresentedFrame=frame.presentedFrame;
-  return {id:randomUUID(),roundId:'0',source:'MOBILE_CAMERA',capturedAt:frame.capturedAt,image:frame.image,width:frame.width,height:frame.height,healthy:true};
+  return {id:randomUUID(),roundId:'0',source:'MOBILE_CAMERA',capturedAt:frame.capturedAt,image:frame.image,width:frame.width,height:frame.height,healthy:true,sourceFrameIndex:frame.presentedFrame};
  }
  async close(){await this.browser?.close();this.browser=null;this.page=null;this.camera=null;this.lastPresentedFrame=0}
 }

@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 export type Parity='EVEN'|'ODD';
 export type SourceType='MOBILE_CAMERA'|'IP_CAMERA'|'NVR_DVR'|'CLOUD_CAMERA';
-export type Frame={id:string;roundId:string;source:SourceType;capturedAt:string;image:Buffer;width:number;height:number;healthy:boolean};
+export type Frame={id:string;roundId:string;source:SourceType;capturedAt:string;image:Buffer;width:number;height:number;healthy:boolean;sourceFrameIndex?:number};
 export interface FrameSource {type:SourceType; capture(roundId:string):Promise<Frame>}
 export type OcrReading={frame:Frame;rawText:string;normalizedText:string;confidence:number;blurScore:number;glareFraction:number;crop:Buffer};
 export interface OcrAdapter {read(frame:Frame,roi:Roi):Promise<OcrReading>}

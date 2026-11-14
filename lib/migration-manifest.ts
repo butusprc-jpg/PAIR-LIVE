@@ -48,6 +48,7 @@ export const migrationPaths=[
  'migrations/044_round_result_line_outbox.sql',
  'migrations/045_legacy_round_award_ledger.sql',
  'migrations/046_camera_ocr_roi.sql',
+ 'migrations/047_round_ocr_candidate_lock.sql',
 ] as const;
 export function assertUniqueMigrationNumbers(paths:readonly string[]){
  const seen=new Map<string,string>(),filenames=new Set<string>();
