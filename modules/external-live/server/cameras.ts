@@ -62,53 +62,16 @@ export async function primaryCameraAction(db:Pool,channel:string,actor:string,in
   if(input.action==='save'||enabled!==previous.display_enabled){
    const updated=(await client.query<{stream_id:string;display_enabled:boolean;revision:string}>('UPDATE vdo_ninja_tenants SET stream_id=$2,display_enabled=$3,remote_key_ciphertext=CASE WHEN $4 THEN NULL ELSE remote_key_ciphertext END,revision=revision+1,updated_at=now(),updated_by=$5 WHERE oa_id=$1 RETURNING stream_id,display_enabled,revision',[tenant.id,nextStream,enabled,input.action==='save',actor])).rows[0];
    await client.query('INSERT INTO vdo_ninja_audit(oa_id,revision,actor,action,before_state,after_state) VALUES($1,$2,$3,$4,$5,$6)',[tenant.id,updated.revision,actor,input.action==='stop'?'STOP':input.action==='start'?'START':'CONNECT',JSON.stringify(previous),JSON.stringify(updated)]);
-   // The actual admin primary-camera Start button must enqueue the same V16
-   // event as the remote-control Start route. No LINE API call inside the TX.
    if(input.action==='start'&&!previous.display_enabled){
-    const event=(await client.query<{id:string}>(
-     'INSERT INTO live_start_line_events(oa_id,live_revision,shop_name) VALUES($1,$2,$3) ON CONFLICT(oa_id,live_revision) DO NOTHING RETURNING id',
-     [tenant.id,updated.revision,tenant.shop_name]
-    )).rows[0];
+    const event=(await client.query<{id:string}>('INSERT INTO live_start_line_events(oa_id,live_revision,shop_name) VALUES($1,$2,$3) ON CONFLICT(oa_id,live_revision) DO NOTHING RETURNING id',[tenant.id,updated.revision,tenant.shop_name])).rows[0];
     if(event){
      await client.query("SELECT set_config('pair_live.countdown_dispatch','true',true)");
      await client.query(`INSERT INTO live_start_line_outbox(event_id,member_id,oa_id,recipient_user_id)
       SELECT $1,p.member_id,$2,i.provider_user_id FROM member_countdown_line_preferences p
       JOIN members m ON m.id=p.member_id AND m.status='active'
       JOIN LATERAL (SELECT provider_user_id FROM member_identities WHERE member_id=p.member_id AND provider='line' AND provider_channel_id=$3 ORDER BY last_login_at DESC LIMIT 1) i ON true
-      WHERE p.enabled=true AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}
-  }
-  await client.query('UPDATE site_cameras SET stream_id=$4,display_enabled=$5,revision=revision+1,updated_at=now(),updated_by=$6 WHERE camera_id=$1 AND oa_id=$2 AND site_id=$3',[row.camera_id,tenant.id,site.site_id,nextStream,enabled,actor]);
- },input.action==='stop');
-}
-export async function configureCamera(db:Pool,channel:string,actor:string,input:{cameraId:unknown;revision:unknown;name:unknown;sourceKind?:unknown;streamId?:unknown;action?:unknown}){
- const name=cameraName(input.name);
- if(typeof input.cameraId!=='string'||!Number.isSafeInteger(input.revision)||Number(input.revision)<0)throw new LiveError('invalid_camera');
- if(!['save','connect','start','stop','test'].includes(String(input.action)))throw new LiveError('invalid_camera_action');
- return change(db,channel,actor,async(client,site,tenant)=>{
-  const row=(await client.query<Camera>('SELECT * FROM site_cameras WHERE camera_id=$1 AND oa_id=$2 AND site_id=$3 FOR UPDATE',[input.cameraId,tenant.id,site.site_id])).rows[0];
-  if(!row)throw new LiveError('camera_not_found',404);
-  if(Number(row.revision)!==input.revision)throw new LiveError('camera_conflict',409);
-  if(row.slot===1&&input.action!=='save'&&input.action!=='test')throw new LiveError('legacy_camera_control_required',409);
-  let kind=row.source_kind,stream=row.stream_id;
-  if(input.action==='save'){
-   kind=String(input.sourceKind||row.source_kind) as Camera['source_kind'];
-   if(!['VDO_NINJA','RTSP_GATEWAY','IP_CAMERA'].includes(kind))throw new LiveError('invalid_camera_source');
-   if(row.slot===1&&kind!=='VDO_NINJA')throw new LiveError('legacy_camera_control_required',409);
-   if(kind!=='VDO_NINJA')stream=null;
-   else if(row.slot!==1){stream=input.streamId===null||input.streamId===''?null:String(input.streamId??row.stream_id??'');if(stream&&!/^[A-Za-z0-9_-]{7,64}$/.test(stream))throw new LiveError('invalid_stream_id')}
-   if(row.display_enabled&&(kind!=='VDO_NINJA'||!stream))throw new LiveError('camera_must_stop_first',409);
-  }
-  if(input.action==='connect'){
-   if(row.slot===1||kind!=='VDO_NINJA')throw new LiveError('camera_not_configured',409);
-   stream=stream||randomBytes(18).toString('base64url');
-  }
-  if(input.action==='start'&&(kind!=='VDO_NINJA'||!stream))throw new LiveError('camera_not_configured',409);
-  if(input.action==='test'&&kind!=='VDO_NINJA')throw new LiveError('gateway_not_configured',409);
-  if(input.action==='test')return;
-  await client.query(`UPDATE site_cameras SET name=$4,source_kind=$5,stream_id=$6,display_enabled=$7,revision=revision+1,updated_at=now(),updated_by=$8 WHERE camera_id=$1 AND oa_id=$2 AND site_id=$3`,[row.camera_id,tenant.id,site.site_id,name,kind,stream,row.slot===1?row.display_enabled:input.action==='start'?true:input.action==='stop'?false:row.display_enabled,actor]);
- });
-}
- ON CONFLICT DO NOTHING`,[event.id,tenant.id,channel]);
+      WHERE p.enabled=true AND length(i.provider_user_id)=33 AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}'
+      ON CONFLICT DO NOTHING`,[event.id,tenant.id,channel]);
     }
    }
   }
