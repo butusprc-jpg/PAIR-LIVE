@@ -1,7 +1,6 @@
 'use client';
 import {useEffect,useState} from 'react';
 import VdoViewer,{validatedViewerUrl} from '../modules/external-live/client/VdoViewer';
-import AdminRoundLiveControls from './AdminRoundLiveControls';
 
 type Camera={cameraId:string;slot:number;name:string;status:'READY'|'NOT_CONFIGURED';displayEnabled:boolean;revision:number;viewerUrl:string|null};
 type State={cameras:Camera[]};
@@ -28,7 +27,6 @@ export default function AdminCameras({role}:{role:'admin'|'operator'|'viewer'}){
    <label>วาง URL VDO.Ninja<input className="field" type="url" inputMode="url" autoCapitalize="off" spellCheck={false} value={url} onChange={event=>{setUrl(event.target.value);setDirty(true)}} placeholder="https://vdo.ninja/?view=STREAM_ID" disabled={busy||role!=='admin'}/></label>
    <div className="camera-controls"><button className="secondary" type="button" disabled={busy||role!=='admin'||camera.displayEnabled} onClick={()=>void act('save')}>บันทึก URL</button><button className="primary" type="button" disabled={busy||role==='viewer'||camera.status!=='READY'||camera.displayEnabled||dirty} onClick={()=>void act('start')}>เริ่ม LIVE</button><button className="secondary" type="button" disabled={busy||role==='viewer'||!camera.displayEnabled} onClick={()=>void act('stop')}>หยุด LIVE</button></div>
    <h3>ภาพตัวอย่างสำหรับแอดมิน</h3>{camera.viewerUrl?<VdoViewer url={camera.viewerUrl} label="ภาพตัวอย่างกล้องหลัก"/>:<div className="external-live-frame"><div className="external-live-empty">ยังไม่ตั้งค่า URL</div></div>}
-   <AdminRoundLiveControls role={role}/>
    <p className="muted">เริ่ม LIVE จะเปิดจอให้สมาชิกเห็นเมื่อมีภาพจากต้นทาง · หยุด LIVE จะซ่อนจอ ไม่สั่งปิดกล้องต้นทาง</p>
   </>}{message&&state&&<p role="status">{message}</p>}
  </section>
