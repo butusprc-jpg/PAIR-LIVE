@@ -4,6 +4,7 @@ import {RoundError} from './core';
 import {walletPathFromDatabase} from '../server/wallet-cutover';
 import {applyWalletMutationWithClient} from '../../modules/member-wallet/server/postgres';
 import {resultParity} from '../line/game-notices';
+import {roundAwardPoints} from './payout';
 
 /** Internal-only. The existing OCR confirmation route is closed; no public caller is installed. */
 export async function settleVerifiedRound(pool:Pool,adminId:string,roundId:string){
@@ -21,7 +22,7 @@ export async function settleVerifiedRound(pool:Pool,adminId:string,roundId:strin
   if(!round.settlement_oa_id||String(round.settlement_oa_id)!==String(config.oa_id))throw new RoundError('round_oa_mismatch',409);
   if(round.status==='SETTLED'){await client.query('COMMIT');return {roundId,status:'SETTLED',replayed:true,resultNumber:String(round.result_number),parity:String(round.result_parity),awards:0}}
   if(!['SCANNING','REVIEW_REQUIRED'].includes(round.status)||!round.closed_at||new Date(round.closes_at)>new Date())throw new RoundError('round_not_ready_for_settlement',409);
-  if(await walletPathFromDatabase(client)!=='wallet')throw new RoundError('settlement_wallet_not_active',409);
+  const pointsPath=await walletPathFromDatabase(client);
   const evidence=(await client.query(`SELECT e.id,e.normalized_text,e.confidence FROM round_ocr_evidence e JOIN round_ocr_verification_decisions d ON d.evidence_id=e.id
    WHERE e.round_id=$1 AND d.decision='VERIFIED' AND e.source_type IN ('IP_CAMERA','NVR_DVR','CLOUD_CAMERA') ORDER BY e.id FOR SHARE OF e,d`,[roundId])).rows;
   if(evidence.length!==1)throw new RoundError('verified_result_missing_or_ambiguous',409);
@@ -35,15 +36,28 @@ export async function settleVerifiedRound(pool:Pool,adminId:string,roundId:strin
    for(const entry of rows){entries++;
     const identities=(await client.query("SELECT provider_channel_id,provider_user_id FROM member_identities WHERE member_id=$1 AND provider='line' ORDER BY last_login_at DESC",[memberId])).rows;
     if(identities.length&&!identities.some(identity=>identity.provider_channel_id===process.env.LINE_LOGIN_CHANNEL_ID))throw new RoundError('entry_member_oa_mismatch',409);
-    const use=(await client.query("SELECT id,points FROM member_wallet_ledger WHERE member_id=$1 AND reference_id=$2 AND type='DEMO_USE'",[memberId,`ROUND_${roundId}_${entry.idempotency_key}`])).rows[0];
-    if(!use||Number(use.points)!==Number(entry.demo_points))throw new RoundError('original_wallet_use_missing',409);
+    if(pointsPath==='wallet'){
+     const use=(await client.query("SELECT id,points FROM member_wallet_ledger WHERE member_id=$1 AND reference_id=$2 AND type='DEMO_USE'",[memberId,`ROUND_${roundId}_${entry.idempotency_key}`])).rows[0];
+     if(!use||Number(use.points)!==Number(entry.demo_points))throw new RoundError('original_wallet_use_missing',409);
+    }else{
+     const accepted=(await client.query("SELECT id FROM round_audit_logs WHERE round_id=$1 AND action='DEMO_ENTRY_ACCEPTED' AND details->>'entry_id'=$2 LIMIT 1",[roundId,entry.id])).rows[0];
+     if(!accepted)throw new RoundError('original_legacy_entry_missing',409);
+    }
     const correct=entry.side.toUpperCase()===parity;
-    if(correct){const amount=BigInt(entry.demo_points)*BigInt(config.rate_numerator),denom=BigInt(config.rate_denominator);
-     if(amount%denom!==BigInt(0)||amount/denom>BigInt(Number.MAX_SAFE_INTEGER))throw new RoundError('payout_not_exact',409);
-     const points=Number(amount/denom);if(points<1)throw new RoundError('payout_not_exact',409);
-     const credited=await applyWalletMutationWithClient(client,{memberId,type:'DEMO_GRANT',points,referenceId:`ROUND_AWARD_${entry.id}`,idempotencyKey:`round-award:${entry.id}`,actor:adminId,source:'round'});
-     if(credited.replayed)throw new RoundError('settlement_state_conflict',409);
-     await client.query('INSERT INTO round_settlement_awards(entry_id,round_id,member_id,credited_points,wallet_ledger_id) VALUES($1,$2,$3,$4,$5)',[entry.id,roundId,memberId,points,credited.entry.id]);awards++;
+    if(correct){const points=roundAwardPoints(Number(entry.demo_points),Number(config.rate_numerator),Number(config.rate_denominator));
+     if(pointsPath==='wallet'){
+      const credited=await applyWalletMutationWithClient(client,{memberId,type:'DEMO_GRANT',points,referenceId:`ROUND_AWARD_${entry.id}`,idempotencyKey:`round-award:${entry.id}`,actor:adminId,source:'round'});
+      if(credited.replayed)throw new RoundError('settlement_state_conflict',409);
+      await client.query('INSERT INTO round_settlement_awards(entry_id,round_id,member_id,credited_points,wallet_ledger_id) VALUES($1,$2,$3,$4,$5)',[entry.id,roundId,memberId,points,credited.entry.id]);
+     }else{
+      const updated=(await client.query('UPDATE members SET demo_points=demo_points+$1,updated_at=clock_timestamp() WHERE id=$2 RETURNING demo_points',[points,memberId])).rows[0];
+      if(!updated)throw new RoundError('member_unavailable',409);
+      const after=Number(updated.demo_points),before=after-points;
+      if(!Number.isSafeInteger(after)||before<0)throw new RoundError('legacy_balance_invalid',409);
+      const ledger=(await client.query('INSERT INTO round_legacy_award_ledger(entry_id,round_id,member_id,points,balance_before,balance_after,actor) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[entry.id,roundId,memberId,points,before,after,adminId])).rows[0];
+      await client.query('INSERT INTO round_settlement_awards(entry_id,round_id,member_id,credited_points,legacy_ledger_id) VALUES($1,$2,$3,$4,$5)',[entry.id,roundId,memberId,points,ledger.id]);
+     }
+     awards++;
     }
     const changed=await client.query('UPDATE round_entries SET status=$3 WHERE id=$1 AND member_id=$2 AND status=\'PENDING\' RETURNING id',[entry.id,memberId,correct?'CORRECT':'INCORRECT']);
     if(changed.rowCount!==1)throw new RoundError('settlement_state_conflict',409);
@@ -55,7 +69,7 @@ export async function settleVerifiedRound(pool:Pool,adminId:string,roundId:strin
   await client.query("SELECT set_config('pair_live.member_id','',true)");
   if(entries!==Number(round.even_people)+Number(round.odd_people))throw new RoundError('round_entries_mismatch',409);
   await client.query(`UPDATE rounds SET status='SETTLED',settled_at=clock_timestamp(),result_number=$2,result_last_digit=$3,result_parity=$4,result_confidence=$5,result_verified_at=clock_timestamp() WHERE id=$1`,[roundId,resultNumber,lastDigit,parity,evidence[0].confidence]);
-  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_SETTLED',jsonb_build_object('evidence_id',$3::bigint,'entries',$4::int,'awards',$5::int,'rate_numerator',$6::int,'rate_denominator',$7::int))",[roundId,adminId,evidence[0].id,entries,awards,config.rate_numerator,config.rate_denominator]);
+  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_SETTLED',jsonb_build_object('evidence_id',$3::bigint,'entries',$4::int,'awards',$5::int,'rate_numerator',$6::int,'rate_denominator',$7::int,'rounding','FLOOR_PER_ENTRY','points_path',$8::text))",[roundId,adminId,evidence[0].id,entries,awards,config.rate_numerator,config.rate_denominator,pointsPath]);
   await client.query('COMMIT');return {roundId,status:'SETTLED',replayed:false,resultNumber,parity,awards};
  }catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}
 }
