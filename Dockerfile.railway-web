@@ -2,7 +2,10 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
-RUN npm ci
+# Local builders behind a private TLS proxy may pass its CA as a BuildKit secret.
+# The CA is neither copied into the image nor needed on Railway's normal build path.
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -s /run/secrets/proxy_ca ]; then NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca npm ci; else npm ci; fi
 COPY . .
 # Only public identifiers are built into client JavaScript. Never pass secrets as ARG.
 ARG NEXT_PUBLIC_LINE_LIFF_ID
