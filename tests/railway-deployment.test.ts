@@ -12,8 +12,8 @@ test('Railway web and existing round worker keep separate start paths',()=>{
  assert.equal(web.deploy.startCommand,'node server.js');
  assert.equal(worker.build.dockerfilePath,'Dockerfile.railway-worker');
  const workerDocker=readFileSync('Dockerfile.railway-worker','utf8');
- assert.match(workerDocker,/RUN --mount=type=secret,id=proxy_ca,required=false/);
- assert.match(workerDocker,/NODE_EXTRA_CA_CERTS=\/run\/secrets\/proxy_ca npm ci; else npm ci/);
+ assert.match(workerDocker,/^RUN npm ci$/m);
+ assert.doesNotMatch(workerDocker,/RUN --mount/);
  assert.match(workerDocker,/COPY --chown=node:node scripts \.\/scripts/);
  assert.doesNotMatch(workerDocker,/strict-ssl=false|NODE_TLS_REJECT_UNAUTHORIZED=0/);
  assert.match(workerDocker,/CMD \["npm", "run", "round:worker"\]/);
@@ -23,6 +23,8 @@ test('Railway web and existing round worker keep separate start paths',()=>{
  assert.equal(web.deploy.healthcheckPath,'/api/health/ready');
  assert.equal(web.deploy.numReplicas,1);
  assert.match(docker,/CMD \["node", "server\.js"\]/);
+ assert.match(docker,/^RUN npm ci$/m);
+ assert.doesNotMatch(docker,/RUN --mount/);
  assert.doesNotMatch(docker,/DATABASE_URL|CHANNEL_ACCESS_TOKEN|SECRET|npm run db:migrate/);
 });
 
