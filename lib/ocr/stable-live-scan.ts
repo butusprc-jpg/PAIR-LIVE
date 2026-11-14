@@ -6,7 +6,7 @@ import type {LiveCamera,LiveFrameSource,NormalizedRoi} from './live-frame-source
 import {roiForFrame,validNormalizedRoi} from './live-frame-source';
 
 export type StableLock={text:string;lastDigit:string;parity:Parity;confidence:number;firstCapturedAt:string;lastCapturedAt:string;frameIds:string[];lastFrameSha256:string};
-export type ScanOutcome={status:'LOCKED';lock:StableLock}|{status:'REVIEW_REQUIRED';reason:string};
+export type ScanOutcome={status:'LOCKED';lock:StableLock;reading:OcrReading}|{status:'REVIEW_REQUIRED';reason:string};
 export type StableSample={frameId:string;capturedAt:string;fullSha256:string;roiPixels:Buffer;reading:OcrReading;sourceFrameIndex?:number};
 export type StableConfig={stableMs:number;minimumFrames:number;maximumGapMs:number;minimumGapMs:number;minimumConfidence:number;minimumBlurScore:number;maximumGlareFraction:number;maximumRoiMotion:number;maximumWaitMs:number};
 export const defaultStableConfig:StableConfig={stableMs:3000,minimumFrames:5,maximumGapMs:1500,minimumGapMs:80,minimumConfidence:75,minimumBlurScore:1,maximumGlareFraction:.25,maximumRoiMotion:.04,maximumWaitMs:15000};
@@ -57,7 +57,7 @@ export async function scanStableLiveNumber(input:{roundId:string;status:string;c
    if(now()>deadline)break;
    let pixels:Buffer;try{pixels=await roiMotionPixels(reading.crop)}catch{gate.reset();continue}
    const locked=gate.add({frameId:frame.id,capturedAt:frame.capturedAt,fullSha256:createHash('sha256').update(frame.image).digest('hex'),roiPixels:pixels,reading,sourceFrameIndex:frame.sourceFrameIndex});
-   if(locked)return {status:'LOCKED',lock:locked};
+   if(locked)return {status:'LOCKED',lock:locked,reading};
   }
   return {status:'REVIEW_REQUIRED',reason:'stable_number_timeout'};
  }finally{await source.close()}
