@@ -34,7 +34,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: OCR parity and admin-fee unit tests
-        run: node --import tsx --test tests/round-core.test.ts tests/game-notices.test.ts tests/v16-preview-target.test.ts
+        run: node --import tsx --test tests/round-core.test.ts tests/game-notices.test.ts tests/v16-preview-target.test.ts tests/v16-live-notification-ui.test.ts
       - name: Bootstrap isolated PostgreSQL migration baseline
         run: npm run db:migrate -- --apply
       - name: Camera LIVE start stop and OA isolation with isolated PostgreSQL
