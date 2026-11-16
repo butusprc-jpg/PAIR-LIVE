@@ -1,8 +1,9 @@
 import {adminAccess,adminDenied} from '../../../../../lib/server/admin-auth';
 import {database} from '../../../../../lib/server/db';
-import {captureLiveFrame,chooseLiveFrameSource,type LiveCamera} from '../../../../../lib/ocr/live-frame-source';
+import {chooseLiveFrameSource,type LiveCamera} from '../../../../../lib/ocr/live-frame-source';
 import {VdoLiveFrameSource} from '../../../../../lib/ocr/vdo-live-frame-source';
 import {resolveVdoTenant} from '../../../../../modules/external-live/server/vdo-ninja';
+import {saveAdminPreviewFrame} from '../../../../../lib/ocr/admin-preview-frame';
 
 export const runtime='nodejs';
 export const maxDuration=30;
@@ -26,9 +27,11 @@ export async function GET(request:Request){
   // Admin-only OCR preview is independent from whether the member LIVE display is enabled.
   const previewCamera={...camera,displayEnabled:true};
   source=chooseLiveFrameSource(previewCamera,tenant.id,{VDO_NINJA:()=>new VdoLiveFrameSource()}) as VdoLiveFrameSource;
-  const {frame}=await captureLiveFrame(source,previewCamera,{x:0,y:0,width:10000,height:10000});
+  await source.open(previewCamera);
+  const frame=await source.capturePreview();
   const latest=await readCamera();if(!latest||latest.streamId!==camera.streamId||latest.revision!==camera.revision)throw new Error('camera_changed_during_capture');
-  return new Response(new Uint8Array(frame.image),{headers:{...headers,'Content-Type':'image/png'}});
+  const captureId=saveAdminPreviewFrame(frame,access.value.admin.id,cameraId,tenant.id);
+  return new Response(new Uint8Array(frame.image),{headers:{...headers,'Content-Type':'image/png','X-OCR-Capture-Id':captureId}});
  }catch{return Response.json({error:'live_capture_unavailable'},{status:503,headers})}
  finally{await source?.close()}
 }

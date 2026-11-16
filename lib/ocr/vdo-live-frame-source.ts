@@ -28,5 +28,20 @@ export class VdoLiveFrameSource implements LiveFrameSource{
   this.lastPresentedFrame=frame.presentedFrame;
   return {id:randomUUID(),roundId:'0',source:'MOBILE_CAMERA',capturedAt:frame.capturedAt,image:frame.image,width:frame.width,height:frame.height,healthy:true,sourceFrameIndex:frame.presentedFrame};
  }
+ /** One screenshot for the admin OCR preview; it does not wait for a frame counter. */
+ async capturePreview():Promise<Frame>{
+  if(!this.page||!this.camera)throw new Error('live_camera_unavailable');
+  const video=this.page.locator('video:visible').first();
+  await video.waitFor({state:'visible',timeout:10000});
+  await video.evaluate((element:HTMLVideoElement)=>new Promise<void>((resolve,reject)=>{
+   if(element.readyState>=2&&element.videoWidth>0)return resolve();
+   const timer=setTimeout(()=>{element.removeEventListener('loadeddata',ready);reject(new Error('camera_offline'))},8000);
+   const ready=()=>{if(element.videoWidth>0){clearTimeout(timer);element.removeEventListener('loadeddata',ready);resolve()}};
+   element.addEventListener('loadeddata',ready);
+  }));
+  const image=Buffer.from(await video.screenshot({type:'png',timeout:10000}));
+  if(image.length<24||!image.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw new Error('invalid_camera_frame');
+  return {id:randomUUID(),roundId:'0',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:image.readUInt32BE(16),height:image.readUInt32BE(20),healthy:true};
+ }
  async close(){await this.browser?.close();this.browser=null;this.page=null;this.camera=null;this.lastPresentedFrame=0}
 }
