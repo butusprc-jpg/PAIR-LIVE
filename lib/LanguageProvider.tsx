@@ -1,5 +1,5 @@
 'use client';
-import {createContext,useCallback,useContext,useEffect,useMemo,useState} from 'react';
+import React,{createContext,useCallback,useContext,useEffect,useMemo,useState} from 'react';
 import type {ReactNode} from 'react';
 import type {Locale} from './i18n';
 import {detectLanguage,normalizeLanguage,readLanguageChoice,saveLanguageChoice} from './language';
@@ -20,6 +20,7 @@ export function LanguageProvider({children}:{children:ReactNode}){
   window.addEventListener('storage',refresh);
   return ()=>{window.removeEventListener('pair-live:provider-language',refresh);window.removeEventListener('storage',refresh)};
  },[]);
+ useEffect(()=>{document.documentElement.lang=locale},[locale]);
  const chooseLanguage=useCallback((value:Locale)=>{
   const selected=normalizeLanguage(value);
   if(!selected)throw new RangeError('unsupported_language');

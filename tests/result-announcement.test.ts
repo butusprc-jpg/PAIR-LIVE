@@ -29,8 +29,9 @@ test('digit overlays the existing VDO.Ninja iframe without changing its URL or a
  const {createElement}=await import('react');
  const {renderToStaticMarkup}=await import('react-dom/server');
  const {default:VdoViewer}=await import('../modules/external-live/client/VdoViewer');
+ const {LanguageProvider}=await import('../lib/LanguageProvider');
  const url='https://vdo.ninja/?view=synthetic123';
- const html=renderToStaticMarkup(createElement(VdoViewer,{url,label:'กล้อง LIVE',minimal:true,overlayDigit:'3'}));
+ const html=renderToStaticMarkup(createElement(LanguageProvider,null,createElement(VdoViewer,{url,label:'กล้อง LIVE',minimal:true,overlayDigit:'3'})));
  assert.match(html,/src="https:\/\/vdo\.ninja\/\?view=synthetic123"/);
  assert.match(html,/class="live-result-overlay"[^>]*>3<\/div>/);
  assert.doesNotMatch(html,/คู่|คี่/);
