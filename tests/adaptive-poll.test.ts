@@ -52,3 +52,4 @@ test('transaction wake during an in-flight poll refreshes once immediately',asyn
 
 test('LIVE polling checks active video every 5s and idle every 15s',()=>{assert.equal(pollDelay(true,true),5_000);assert.equal(pollDelay(false,true),15_000);assert.equal(pollDelay(true),25_000);assert.equal(pollDelay(false),60_000)});
 test('visible round polling discovers start and close within 2.5s while other pages keep the backup budget',()=>{assert.equal(pollDelay(true,false,true),2_500);assert.equal(pollDelay(false,false,true),2_500);assert.equal(pollDelay(true),25_000);assert.equal(pollDelay(false),60_000)});
+test('OCR announcement can poll in 2.5s only while scanning and retains the 5s LIVE interval otherwise',()=>{assert.equal(pollDelay(true,true,true),2_500);assert.equal(pollDelay(true,true,false),5_000)});

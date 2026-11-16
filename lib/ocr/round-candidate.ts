@@ -19,7 +19,7 @@ export async function reviewOcrScanFailure(pool:Pool,roundId:string,reason:strin
 }
 
 /** Internal-only one-shot candidate scan; never writes points or LINE outbox. */
-export async function lockRoundOcrCandidate(pool:Pool,roundId:string,factories:Partial<Record<LiveSourceKind,LiveFrameAdapterFactory>>,engine:OcrAdapter,storage:CandidateImageStorage|null=configuredCandidateImageStorage()):Promise<CandidateResult>{
+export async function lockRoundOcrCandidate(pool:Pool,roundId:string,factories:Partial<Record<LiveSourceKind,LiveFrameAdapterFactory>>,engine:OcrAdapter,storage:CandidateImageStorage|null=configuredCandidateImageStorage(),onTiming?:(stage:'capture_start_lag'|'capture'|'ocr'|'candidate_store',durationMs:number)=>void):Promise<CandidateResult>{
  if(!/^\d{1,18}$/.test(roundId))throw new Error('invalid_round_id');
  if(!storage)throw new Error('candidate_storage_not_configured');
  const guard=await pool.connect();let locked=false;
@@ -45,7 +45,7 @@ export async function lockRoundOcrCandidate(pool:Pool,roundId:string,factories:P
  const camera:LiveCamera={cameraId:row.cameraId,oaId:row.oaId,siteId:row.siteId,sourceKind:row.sourceKind,streamId:row.streamId,displayEnabled:true};
  const claimed=(await guard.query('INSERT INTO round_ocr_one_shot_claims(round_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING round_id',[roundId])).rowCount===1;
  const source=claimed?chooseLiveFrameSource(camera,row.settlement_oa_id,factories):null;
- const outcome=source?await scanOneShotNumber({roundId,closedAt,camera,roi:savedRoi},source,engine):{status:'REVIEW_REQUIRED' as const,reason:'one_shot_already_attempted'};
+ const outcome=source?await scanOneShotNumber({roundId,closedAt,camera,roi:savedRoi},source,engine,undefined,onTiming):{status:'REVIEW_REQUIRED' as const,reason:'one_shot_already_attempted'};
  const client=guard;try{
   await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=(await client.query('SELECT status,closed_at,settlement_oa_id FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id() FOR UPDATE',[roundId])).rows[0];
@@ -65,8 +65,10 @@ export async function lockRoundOcrCandidate(pool:Pool,roundId:string,factories:P
    const originalSha256=validatePng(reading.frame.image),cropSha256=validatePng(reading.crop);
    if(originalSha256!==lock.lastFrameSha256||reading.frame.capturedAt!==lock.lastCapturedAt||reading.normalizedText!==lock.text||reading.frame.roundId!==roundId)throw new Error('candidate_frame_mismatch');
    const keys=candidateImageKeys(camera.oaId,roundId,originalSha256,cropSha256);
+   const storeStart=performance.now();
    await storage.putImmutable(keys.full,reading.frame.image);
    try{await storage.putImmutable(keys.crop,reading.crop)}catch(error){await storage.remove(keys.full).catch(()=>{});throw error}
+   onTiming?.('candidate_store',performance.now()-storeStart);
    await client.query(`INSERT INTO round_ocr_candidate_locks(round_id,oa_id,camera_id,full_text,last_digit,parity,confidence,first_captured_at,last_captured_at,frame_count,last_frame_sha256)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[roundId,camera.oaId,camera.cameraId,lock.text,lock.lastDigit,lock.parity,lock.confidence,lock.firstCapturedAt,lock.lastCapturedAt,lock.frameIds.length,lock.lastFrameSha256]);
    await client.query(`INSERT INTO round_ocr_candidate_images(round_id,oa_id,camera_id,source_kind,source_id,frame_id,captured_at,full_text,last_digit,parity,confidence,original_sha256,crop_sha256,original_object_key,crop_object_key,original_bytes,crop_bytes)

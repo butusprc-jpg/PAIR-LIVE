@@ -44,8 +44,10 @@ test('two OCR workers lock one candidate after round close without settlement or
   assert.deepEqual(await lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage),{status:'WAITING'});
   assert.equal(sequence,0,'the camera must not capture before closed_at + 3 seconds');
   await new Promise(resolve=>setTimeout(resolve,3100));
-  const [first,second]=await Promise.all([lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage),lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage)]);
+  const stages:string[]=[];const onTiming=(stage:string,durationMs:number)=>{assert.ok(durationMs>=0);stages.push(stage);console.log(`synthetic_ocr_stage stage=${stage} duration_ms=${durationMs.toFixed(1)}`)};
+  const [first,second]=await Promise.all([lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage,onTiming),lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage,onTiming)]);
   assert.equal(first.status,'LOCKED');assert.equal(second.status,'LOCKED');assert.equal(sequence,1,'two workers must capture only one frame');
+  assert.deepEqual(stages.sort(),['candidate_store','capture','capture_start_lag','ocr']);
   assert.equal((await lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage)).status,'LOCKED');assert.equal(sequence,1,'replay must not capture again');
   if(first.status==='LOCKED'&&second.status==='LOCKED')assert.deepEqual([first.replayed,second.replayed].sort(),[false,true]);
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_candidate_locks WHERE round_id=$1',[round])).rows[0].n,1);
@@ -62,11 +64,11 @@ test('two OCR workers lock one candidate after round close without settlement or
   const missingCrop:CandidateImageStorage={putImmutable:(key,data)=>storage.putImmutable(key,data),get:key=>key.endsWith('/crop.png')?Promise.resolve(null):storage.get(key),remove:key=>storage.remove(key)};
   await assert.rejects(verifyCandidateEvidence(db,String(round),missingCrop,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'}),/candidate_image_missing/);
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_verification_decisions')).rows[0].n,0);
-  const approved=await Promise.all([verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'}),verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'})]);
+  const verifyStart=performance.now();const approved=await Promise.all([verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'}),verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'})]);console.log(`synthetic_ocr_stage stage=verify_concurrent duration_ms=${(performance.now()-verifyStart).toFixed(1)}`);
   assert.equal(approved[0].evidenceId,approved[1].evidenceId,'repeated confirmation is idempotent');
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_verification_decisions')).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int n FROM round_audit_logs WHERE round_id=$1 AND action='OCR_RESULT_CONFIRMED'",[round])).rows[0].n,1);
-  const announcement=(await readResultAnnouncement(db)).announcement;
+  const announcementStart=performance.now();const announcement=(await readResultAnnouncement(db)).announcement;console.log(`synthetic_ocr_stage stage=announcement_query duration_ms=${(performance.now()-announcementStart).toFixed(1)}`);
   assert.equal(announcement?.lastDigit,'0');assert.equal(announcement?.roundId,String(round));
   assert.equal((await readResultAnnouncement(db)).announcement?.confirmedAt,announcement?.confirmedAt,'polling cannot renew the ten-second window');
   assert.equal((await db.query('SELECT status,result_number,settled_at FROM rounds WHERE id=$1',[round])).rows[0].status,'SCANNING');

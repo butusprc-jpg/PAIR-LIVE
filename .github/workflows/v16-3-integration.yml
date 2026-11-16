@@ -10,6 +10,13 @@ on:
       - 'components/AdminOcrEvidence.tsx'
       - 'tests/result-announcement*'
       - 'tests/round-ocr-candidate-db.integration.test.ts'
+      - 'scripts/round-worker.ts'
+      - 'lib/line/worker-pump.ts'
+      - 'lib/ocr/one-shot-scan.ts'
+      - 'modules/external-live/client/MemberLivePlayer.tsx'
+      - 'app/api/round/result-announcement/route.ts'
+      - 'app/page.tsx'
+      - 'tests/worker-line-pump.test.ts'
   workflow_dispatch:
 permissions:
   contents: read
@@ -34,6 +41,7 @@ jobs:
       OCR_CANDIDATE_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       RESULT_ANNOUNCEMENT_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       V16_ROUND_BUTTON_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      COUNTDOWN_V11_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +53,7 @@ jobs:
       - name: Install OCR tools
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr imagemagick
       - name: Guard every database target
-        run: node --import tsx --input-type=module -e "import {assertTestTarget} from './lib/migration-manifest.ts'; for (const key of ['MIGRATION_TEST_DATABASE_URL','WALLET_TEST_DATABASE_URL','OCR_CANDIDATE_TEST_DATABASE_URL','RESULT_ANNOUNCEMENT_TEST_DATABASE_URL','V16_ROUND_BUTTON_TEST_DATABASE_URL']) assertTestTarget(process.env[key])"
+        run: node --import tsx --input-type=module -e "import {assertTestTarget} from './lib/migration-manifest.ts'; for (const key of ['MIGRATION_TEST_DATABASE_URL','WALLET_TEST_DATABASE_URL','OCR_CANDIDATE_TEST_DATABASE_URL','RESULT_ANNOUNCEMENT_TEST_DATABASE_URL','V16_ROUND_BUTTON_TEST_DATABASE_URL','COUNTDOWN_V11_TEST_DATABASE_URL']) assertTestTarget(process.env[key])"
       - name: Apply and validate migration baseline
         run: |
           npm run db:migrate -- --apply
@@ -55,6 +63,10 @@ jobs:
           node --import tsx --test --test-concurrency=1
           tests/v16-round-buttons.test.ts
           tests/automatic-countdown.test.ts
+          tests/adaptive-poll.test.ts
+          tests/worker-line-pump.test.ts
+          tests/round-broadcast.test.ts
+          tests/countdown-v11-db.integration.test.ts
           tests/round-core.test.ts
           tests/camera-countdown.test.ts
           tests/one-shot-ocr.test.ts

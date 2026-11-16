@@ -21,13 +21,14 @@ export async function analyzeOneShotFrame(frame:Frame,engine:OcrAdapter,detector
  const lastDigit=extractLastDisplayedDigit(text);
  return {status:'LOCKED',text,lastDigit,parity:determineParity(lastDigit),confidence:reading.confidence,reading,roi:detected.roi};
 }
-export async function scanOneShotNumber(input:{roundId:string;closedAt:string;camera:LiveCamera;roi?:NormalizedRoi},source:LiveFrameSource,engine:OcrAdapter,now=()=>Date.now()):Promise<OneShotOutcome>{
- if(!/^\d+$/.test(input.roundId)||!mayCapture(input.closedAt,now()))return {status:'REVIEW_REQUIRED',reason:'before_three_seconds'};
- let frame:Frame;
+export async function scanOneShotNumber(input:{roundId:string;closedAt:string;camera:LiveCamera;roi?:NormalizedRoi},source:LiveFrameSource,engine:OcrAdapter,now=()=>Date.now(),onTiming?:(stage:'capture_start_lag'|'capture'|'ocr',durationMs:number)=>void):Promise<OneShotOutcome>{
+ const startedAt=now();if(!/^\d+$/.test(input.roundId)||!mayCapture(input.closedAt,startedAt))return {status:'REVIEW_REQUIRED',reason:'before_three_seconds'};
+ onTiming?.('capture_start_lag',startedAt-readyAt(input.closedAt));
+ let frame:Frame;const captureStart=performance.now();
  try{
   await source.open(input.camera);frame=await source.capture();
- }catch{return {status:'REVIEW_REQUIRED',reason:'camera_offline'}}finally{await source.close()}
+ }catch{return {status:'REVIEW_REQUIRED',reason:'camera_offline'}}finally{await source.close();onTiming?.('capture',performance.now()-captureStart)}
  const captured=Date.parse(frame.capturedAt);
  if(!Number.isFinite(captured)||captured<readyAt(input.closedAt)||captured>now()+1000||now()-captured>2000)return {status:'REVIEW_REQUIRED',reason:'stale_or_early_frame'};
- return analyzeOneShotFrame({...frame,roundId:input.roundId},engine,detectNumberRegion,input.roi);
+ const ocrStart=performance.now();const result=await analyzeOneShotFrame({...frame,roundId:input.roundId},engine,detectNumberRegion,input.roi);onTiming?.('ocr',performance.now()-ocrStart);return result;
 }
