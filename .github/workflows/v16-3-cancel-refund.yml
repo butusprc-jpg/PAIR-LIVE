@@ -28,6 +28,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      V16_ROUND_BUTTON_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       WALLET_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
@@ -44,6 +45,6 @@ jobs:
       - name: Cancel refund integration
         run: node --import tsx --test tests/wallet-round-db.integration.test.ts
       - name: Related unit tests
-        run: node --import tsx --test tests/round-core.test.ts tests/camera-countdown.test.ts
+        run: node --import tsx --test tests/automatic-countdown.test.ts tests/round-core.test.ts tests/camera-countdown.test.ts tests/v16-round-buttons.test.ts
       - name: TypeScript
         run: npx tsc --noEmit
