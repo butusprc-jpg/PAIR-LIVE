@@ -1,0 +1,49 @@
+name: V16.3 one-shot OCR evidence
+on:
+  push:
+    branches: [feat/pair-live-v16-1-real-camera-ocr]
+    paths:
+      - '.github/workflows/v16-3-one-shot-ocr.yml'
+      - 'lib/ocr/one-shot-scan.ts'
+      - 'lib/ocr/round-candidate.ts'
+      - 'tests/one-shot-ocr.test.ts'
+      - 'tests/round-ocr-candidate-db.integration.test.ts'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  one-shot-ocr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      OCR_CANDIDATE_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify disposable localhost target
+        run: node --import tsx --input-type=module -e "import {assertTestTarget} from './lib/migration-manifest.ts'; assertTestTarget(process.env.OCR_CANDIDATE_TEST_DATABASE_URL)"
+      - name: Bootstrap isolated migration baseline
+        run: npm run db:migrate -- --apply
+      - name: One-shot OCR and PostgreSQL evidence tests
+        run: node --import tsx --test tests/one-shot-ocr.test.ts tests/round-ocr-candidate-db.integration.test.ts
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build

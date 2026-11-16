@@ -5,6 +5,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Pool} from 'pg';
+import {database} from '../lib/server/db';
 import sharp from 'sharp';
 import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
 import {lockRoundOcrCandidate} from '../lib/ocr/round-candidate';
@@ -16,10 +17,10 @@ import {deleteCandidateImage,deleteCandidateImages,listCandidateImages,readCandi
 
 test('two OCR workers lock one candidate after round close without settlement or LINE',{skip:!process.env.OCR_CANDIDATE_TEST_DATABASE_URL},async()=>{
  const raw=process.env.OCR_CANDIDATE_TEST_DATABASE_URL!,root=new Pool({connectionString:assertTestTarget(raw)}),schema='ocr_candidate_'+randomUUID().replaceAll('-','');let db:Pool|undefined,createdPublicBinding=false;const imageRoot=await mkdtemp(join(tmpdir(),'pair-ocr-images-'));
- const keys=['CONNECTED_LINE_OA_ID','LINE_MESSAGING_CHANNEL_ACCESS_TOKEN'],prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+ const keys=['DATABASE_URL','CONNECTED_LINE_OA_ID','LINE_MESSAGING_CHANNEL_ACCESS_TOKEN'],prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
  try{
   if(!(await root.query("SELECT to_regclass('public.external_live_role_bindings') AS existing")).rows[0].existing){await root.query('CREATE TABLE public.external_live_role_bindings(role_name name,oa_id uuid)');createdPublicBinding=true}
-  await root.query(`CREATE SCHEMA ${schema}`);const url=new URL(raw);url.searchParams.set('options',`-csearch_path=${schema}`);db=new Pool({connectionString:url.toString(),max:8});
+  await root.query(`CREATE SCHEMA ${schema}`);const url=new URL(raw);url.searchParams.set('options',`-csearch_path=${schema}`);db=new Pool({connectionString:url.toString(),max:8});process.env.DATABASE_URL=url.toString();
   for(const migration of await migrationManifest())await db.query(migration.sql);
   const token='synthetic-ocr-test-token',lineOa='@synthetic-ocr';process.env.CONNECTED_LINE_OA_ID=lineOa;process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=token;
   const oaId=(await db.query("INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES($1,'OCR Test',true,now()+interval '1 day',$2) RETURNING id",[lineOa,createHash('sha256').update(token).digest('hex')])).rows[0].id;
@@ -27,11 +28,19 @@ test('two OCR workers lock one candidate after round close without settlement or
   const site=(await db.query("INSERT INTO camera_sites(oa_id,name) VALUES($1,'Test Site') RETURNING site_id",[oaId])).rows[0].site_id;
   await db.query("INSERT INTO vdo_ninja_tenants(oa_id,stream_id,display_enabled) VALUES($1,'synthetic123',true)",[oaId]);
   const camera=(await db.query("INSERT INTO site_cameras(site_id,oa_id,slot,name,stream_id,display_enabled) VALUES($1,$2,1,'Test Camera','synthetic123',true) RETURNING camera_id",[site,oaId])).rows[0].camera_id;
-  await db.query('INSERT INTO camera_ocr_roi(camera_id,oa_id,x,y,width,height,updated_by) VALUES($1,$2,0,0,8000,10000,$3)',[camera,oaId,admin]);
-  const round=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,closed_at,settlement_oa_id) VALUES(current_date,now()-interval '10 minutes',now()-interval '5 minutes',5,'SCANNING',now()-interval '5 minutes',$1) RETURNING id",[oaId])).rows[0].id;
+  await db.query('INSERT INTO camera_ocr_roi(camera_id,oa_id,x,y,width,height,updated_by) VALUES($1,$2,0,0,6500,10000,$3)',[camera,oaId,admin]);
+  const round=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,settlement_oa_id) VALUES(current_date,now()-interval '10 minutes',now()-interval '5 minutes',5,'OPEN',$1) RETURNING id",[oaId])).rows[0].id;
+  const {tickRoundEngine}=await import('../lib/rounds/store');
+  assert.equal((await tickRoundEngine()).round?.status,'CLOSED');
+  const closedAt=(await db.query('SELECT closed_at FROM rounds WHERE id=$1',[round])).rows[0].closed_at as Date;assert.ok(closedAt);
+  assert.equal((await tickRoundEngine()).round?.status,'SCANNING');
+  assert.equal((await db.query('SELECT closed_at FROM rounds WHERE id=$1',[round])).rows[0].closed_at.getTime(),closedAt.getTime());
   let sequence=0;
-  const makeSource=():LiveFrameSource=>({kind:'VDO_NINJA',async open(){},async capture(){const n=++sequence;const image=await sharp(Buffer.from(`<svg width="800" height="240" xmlns="http://www.w3.org/2000/svg"><rect width="800" height="240" fill="white"/><text x="320" y="170" text-anchor="middle" font-family="DejaVu Sans" font-size="120" fill="black">5.60</text><rect x="700" y="${n%100}" width="20" height="20" fill="black"/></svg>`)).png().toBuffer();return {id:`server-${n}`,roundId:'0',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:800,height:240,healthy:true,sourceFrameIndex:n}},async close(){}});
+  const makeSource=():LiveFrameSource=>({kind:'VDO_NINJA',async open(){},async capture(){const n=++sequence;const image=await sharp(Buffer.from(`<svg width="800" height="240" xmlns="http://www.w3.org/2000/svg"><rect width="800" height="240" fill="white"/><text x="320" y="170" text-anchor="middle" font-family="DejaVu Sans" font-size="120" fill="black">5.60</text><text x="670" y="145" font-family="DejaVu Sans" font-size="42" fill="black">99.99</text><rect x="700" y="${n%100}" width="20" height="20" fill="black"/></svg>`)).png().toBuffer();return {id:`server-${n}`,roundId:'0',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:800,height:240,healthy:true,sourceFrameIndex:n}},async close(){}});
   const factory=()=>makeSource(),engine=new TesseractOcrAdapter(),storage=new LocalCandidateImageStorage(imageRoot);
+  assert.deepEqual(await lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage),{status:'WAITING'});
+  assert.equal(sequence,0,'the camera must not capture before closed_at + 3 seconds');
+  await new Promise(resolve=>setTimeout(resolve,3100));
   const [first,second]=await Promise.all([lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage),lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage)]);
   assert.equal(first.status,'LOCKED');assert.equal(second.status,'LOCKED');assert.equal(sequence,1,'two workers must capture only one frame');
   assert.equal((await lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage)).status,'LOCKED');assert.equal(sequence,1,'replay must not capture again');
@@ -53,6 +62,9 @@ test('two OCR workers lock one candidate after round close without settlement or
   const earlyRound=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,closed_at,settlement_oa_id) VALUES(current_date,now()-interval '10 minutes',now()-interval '5 minutes',5,'SCANNING',now()-interval '1 second',$1) RETURNING id",[oaId])).rows[0].id;
   assert.deepEqual(await lockRoundOcrCandidate(db,String(earlyRound),{VDO_NINJA:factory},engine,storage),{status:'WAITING'});
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_one_shot_claims WHERE round_id=$1',[earlyRound])).rows[0].n,0);
+  await db.query("UPDATE rounds SET status='CANCELLED' WHERE id=$1",[earlyRound]);
+  await assert.rejects(lockRoundOcrCandidate(db,String(earlyRound),{VDO_NINJA:factory},engine,storage),/round_not_closed_for_ocr/);
+  assert.equal(sequence,1,'cancelled round must never capture');
   assert.equal(sequence,1);
   await db.query("UPDATE rounds SET status='CANCELLED' WHERE id=$1",[earlyRound]);
   const failedStorage:CandidateImageStorage={putImmutable:(key,data)=>storage.putImmutable(key,data),get:key=>storage.get(key),remove:async key=>{if(key.endsWith('/crop.png'))throw Error('synthetic_storage_failure');await storage.remove(key)}};
@@ -83,5 +95,5 @@ test('two OCR workers lock one candidate after round close without settlement or
   assert.equal((await db.query('SELECT status FROM rounds WHERE id=$1',[failedRound])).rows[0].status,'SCANNING');
   assert.equal((await db.query('SELECT count(*)::int n FROM round_settlement_awards')).rows[0].n,0);
   assert.equal((await db.query('SELECT count(*)::int n FROM round_result_line_outbox')).rows[0].n,0);
- }finally{for(const key of keys){if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key]}await db?.end();await root.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);if(createdPublicBinding)await root.query('DROP TABLE public.external_live_role_bindings');await root.end();await rm(imageRoot,{recursive:true,force:true})}
+ }finally{for(const key of keys){if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key]}await database().end().catch(()=>{});await db?.end();await root.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);if(createdPublicBinding)await root.query('DROP TABLE public.external_live_role_bindings');await root.end();await rm(imageRoot,{recursive:true,force:true})}
 });

@@ -1,13 +1,13 @@
 import type {Pool} from 'pg';
 import {createHash} from 'node:crypto';
-import type {LiveCamera,LiveFrameAdapterFactory,LiveSourceKind} from './live-frame-source';
-import {chooseLiveFrameSource} from './live-frame-source';
+import type {LiveCamera,LiveFrameAdapterFactory,LiveSourceKind,NormalizedRoi} from './live-frame-source';
+import {chooseLiveFrameSource,validNormalizedRoi} from './live-frame-source';
 import {mayCapture,scanOneShotNumber} from './one-shot-scan';
 import type {OcrAdapter} from './core';
 import {candidateImageKeys,configuredCandidateImageStorage,type CandidateImageStorage} from './candidate-image-storage';
 import {validatePng} from './evidence';
 
-type Row={id:string;status:string;closed_at:Date|null;closes_at:Date;settlement_oa_id:string|null;cameraId:string;oaId:string;siteId:string;sourceKind:LiveSourceKind;streamId:string|null;displayEnabled:boolean;cameraRevision:string;oa_enabled:boolean;oa_paused:boolean;oa_deleted_at:Date|null;oa_expires_at:Date;line_oa_id:string;verified_token_hash:string|null};
+type Row={id:string;status:string;closed_at:Date|null;closes_at:Date;settlement_oa_id:string|null;cameraId:string;oaId:string;siteId:string;sourceKind:LiveSourceKind;streamId:string|null;displayEnabled:boolean;cameraRevision:string;roiX:number|null;roiY:number|null;roiWidth:number|null;roiHeight:number|null;oa_enabled:boolean;oa_paused:boolean;oa_deleted_at:Date|null;oa_expires_at:Date;line_oa_id:string;verified_token_hash:string|null};
 export type CandidateResult={status:'LOCKED';replayed:boolean;text:string;lastDigit:string;parity:string}|{status:'REVIEW_REQUIRED';reason:string}|{status:'WAITING'};
 export async function reviewOcrScanFailure(pool:Pool,roundId:string,reason:string){
  if(!/^\d{1,18}$/.test(roundId))throw new Error('invalid_round_id');
@@ -29,20 +29,23 @@ export async function lockRoundOcrCandidate(pool:Pool,roundId:string,factories:P
  if(prior){if(!prior.image_id||!prior.original_object_key||!prior.crop_object_key||!await storage.get(prior.original_object_key)||!await storage.get(prior.crop_object_key))throw new Error('candidate_image_missing');return {status:'LOCKED',replayed:true,text:prior.full_text,lastDigit:prior.last_digit,parity:prior.parity}}
  const rows=(await guard.query<Row>(`SELECT r.id,r.status,r.closed_at,r.closes_at,r.settlement_oa_id,c.camera_id AS "cameraId",c.oa_id AS "oaId",c.site_id AS "siteId",c.source_kind AS "sourceKind",
   CASE WHEN c.slot=1 THEN v.stream_id ELSE c.stream_id END AS "streamId",CASE WHEN c.slot=1 THEN v.display_enabled ELSE c.display_enabled END AS "displayEnabled",
-  c.revision AS "cameraRevision",o.enabled AS oa_enabled,o.paused AS oa_paused,o.deleted_at AS oa_deleted_at,o.expires_at AS oa_expires_at,o.line_oa_id,o.verified_token_hash
+  c.revision AS "cameraRevision",roi.x AS "roiX",roi.y AS "roiY",roi.width AS "roiWidth",roi.height AS "roiHeight",o.enabled AS oa_enabled,o.paused AS oa_paused,o.deleted_at AS oa_deleted_at,o.expires_at AS oa_expires_at,o.line_oa_id,o.verified_token_hash
   FROM rounds r JOIN oa_service_control o ON o.id=r.settlement_oa_id
   JOIN site_cameras c ON c.oa_id=o.id
   LEFT JOIN vdo_ninja_tenants v ON v.oa_id=c.oa_id AND c.slot=1
+  LEFT JOIN camera_ocr_roi roi ON roi.camera_id=c.camera_id AND roi.oa_id=c.oa_id
   WHERE r.id=$1 AND r.epoch_id=current_round_epoch_id() AND c.slot=1
   ORDER BY c.slot LIMIT 2`,[roundId])).rows;
  if(rows.length!==1)throw new Error(rows.length?'ocr_camera_ambiguous':'ocr_camera_missing');
  const row=rows[0],token=process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
  if(row.status!=='SCANNING'||!row.closed_at||new Date(row.closes_at)>new Date()||!row.oa_enabled||row.oa_paused||row.oa_deleted_at||new Date(row.oa_expires_at)<=new Date()||!row.settlement_oa_id||row.oaId!==row.settlement_oa_id||!token||row.line_oa_id!==process.env.CONNECTED_LINE_OA_ID||row.verified_token_hash!==createHash('sha256').update(token).digest('hex'))throw new Error('round_not_closed_for_ocr');
  const closedAt=new Date(row.closed_at).toISOString();if(!mayCapture(closedAt,Date.now()))return {status:'WAITING'};
+ const savedRoi:NormalizedRoi={x:Number(row.roiX),y:Number(row.roiY),width:Number(row.roiWidth),height:Number(row.roiHeight)};
+ if(row.roiX===null||!validNormalizedRoi(savedRoi))throw new Error('ocr_roi_not_saved');
  const camera:LiveCamera={cameraId:row.cameraId,oaId:row.oaId,siteId:row.siteId,sourceKind:row.sourceKind,streamId:row.streamId,displayEnabled:true};
  const claimed=(await guard.query('INSERT INTO round_ocr_one_shot_claims(round_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING round_id',[roundId])).rowCount===1;
  const source=claimed?chooseLiveFrameSource(camera,row.settlement_oa_id,factories):null;
- const outcome=source?await scanOneShotNumber({roundId,closedAt,camera},source,engine):{status:'REVIEW_REQUIRED' as const,reason:'one_shot_already_attempted'};
+ const outcome=source?await scanOneShotNumber({roundId,closedAt,camera,roi:savedRoi},source,engine):{status:'REVIEW_REQUIRED' as const,reason:'one_shot_already_attempted'};
  const client=guard;try{
   await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(74021601)');
   const current=(await client.query('SELECT status,closed_at,settlement_oa_id FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id() FOR UPDATE',[roundId])).rows[0];
@@ -50,12 +53,13 @@ export async function lockRoundOcrCandidate(pool:Pool,roundId:string,factories:P
   if(existing&&!existing.image_id)throw new Error('candidate_image_missing');
   if(existing){await client.query('COMMIT');return {status:'LOCKED',replayed:true,text:existing.full_text,lastDigit:existing.last_digit,parity:existing.parity}}
   if(!current||current.status!=='SCANNING'||new Date(current.closed_at).getTime()!==new Date(row.closed_at).getTime()||current.settlement_oa_id!==row.settlement_oa_id)throw new Error('round_changed_during_ocr');
-  const config=(await client.query(`SELECT c.revision AS camera_revision,
+  const config=(await client.query(`SELECT c.revision AS camera_revision,roi.x AS roi_x,roi.y AS roi_y,roi.width AS roi_width,roi.height AS roi_height,
    CASE WHEN c.slot=1 THEN v.stream_id ELSE c.stream_id END AS stream_id,
    CASE WHEN c.slot=1 THEN v.display_enabled ELSE c.display_enabled END AS display_enabled
    FROM site_cameras c
-   LEFT JOIN vdo_ninja_tenants v ON v.oa_id=c.oa_id AND c.slot=1 WHERE c.camera_id=$1 AND c.oa_id=$2`,[camera.cameraId,camera.oaId])).rows[0];
-  if(!config||String(config.camera_revision)!==String(row.cameraRevision)||config.stream_id!==camera.streamId)throw new Error('ocr_configuration_changed');
+   LEFT JOIN vdo_ninja_tenants v ON v.oa_id=c.oa_id AND c.slot=1
+   LEFT JOIN camera_ocr_roi roi ON roi.camera_id=c.camera_id AND roi.oa_id=c.oa_id WHERE c.camera_id=$1 AND c.oa_id=$2`,[camera.cameraId,camera.oaId])).rows[0];
+  if(!config||String(config.camera_revision)!==String(row.cameraRevision)||config.stream_id!==camera.streamId||config.roi_x!==savedRoi.x||config.roi_y!==savedRoi.y||config.roi_width!==savedRoi.width||config.roi_height!==savedRoi.height)throw new Error('ocr_configuration_changed');
   if(outcome.status==='LOCKED'){
    const reading=outcome.reading,lock={text:outcome.text,lastDigit:outcome.lastDigit,parity:outcome.parity,confidence:outcome.confidence,firstCapturedAt:reading.frame.capturedAt,lastCapturedAt:reading.frame.capturedAt,frameIds:[reading.frame.id],lastFrameSha256:createHash('sha256').update(reading.frame.image).digest('hex')};
    const originalSha256=validatePng(reading.frame.image),cropSha256=validatePng(reading.crop);

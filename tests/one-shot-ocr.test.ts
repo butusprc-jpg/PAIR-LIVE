@@ -40,3 +40,9 @@ test('camera offline and early/stale frames cannot be used',async()=>{
  const offline:LiveFrameSource={...source,async capture(){throw Error('offline')}};
  assert.deepEqual(await scanOneShotNumber({roundId:'1',closedAt:new Date(Date.now()-5000).toISOString(),camera},offline,new TesseractOcrAdapter()),{status:'REVIEW_REQUIRED',reason:'camera_offline'});
 });
+test('saved ROI reads 5.8343 and ignores other numbers outside the ROI',async()=>{
+ const image=await sharp(Buffer.from('<svg width="900" height="240" xmlns="http://www.w3.org/2000/svg"><rect width="900" height="240" fill="white"/><text x="30" y="160" font-family="DejaVu Sans" font-size="110" fill="black">5.8343</text><text x="665" y="160" font-family="DejaVu Sans" font-size="95" fill="black">99.99</text></svg>')).png().toBuffer();
+ const f={...(await frame('5.8756')),image,width:900,height:240};
+ const result=await analyzeOneShotFrame(f,new TesseractOcrAdapter(),async()=>{throw Error('full-frame detection must not run')},{x:0,y:0,width:6500,height:10000});
+ assert.equal(result.status,'LOCKED');if(result.status==='LOCKED'){assert.equal(result.text,'5.8343');assert.equal(result.lastDigit,'3');assert.equal(result.parity,'ODD');assert.ok(result.roi.x+result.roi.width<665)}
+});
