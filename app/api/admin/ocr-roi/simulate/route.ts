@@ -4,8 +4,8 @@ import {resolveVdoTenant} from '../../../../../modules/external-live/server/vdo-
 import {chooseLiveFrameSource,type LiveCamera} from '../../../../../lib/ocr/live-frame-source';
 import {VdoLiveFrameSource} from '../../../../../lib/ocr/vdo-live-frame-source';
 import {TesseractOcrAdapter} from '../../../../../lib/ocr/engine';
-import {analyzeOneShotFrame} from '../../../../../lib/ocr/one-shot-scan';
-import {previewGuess} from '../../../../../lib/ocr/preview-guess';
+import {roiForFrame,validNormalizedRoi,type NormalizedRoi} from '../../../../../lib/ocr/live-frame-source';
+import {validateScaleDisplay,extractLastDisplayedDigit,determineParity,defaultOcrConfig} from '../../../../../lib/ocr/core';
 
 export const runtime='nodejs';
 export const maxDuration=45;
@@ -35,13 +35,28 @@ export async function POST(request:Request){
   source=chooseLiveFrameSource({...camera,displayEnabled:true},tenant.id,{VDO_NINJA:()=>new VdoLiveFrameSource()}) as VdoLiveFrameSource;
   await source.open({...camera,displayEnabled:true});const frame=await source.capture();
   if(Date.parse(frame.capturedAt)<readyAt)throw new Error('early_frame');
-  const result=await analyzeOneShotFrame(frame,new TesseractOcrAdapter());
+  // The operator's saved orange ROI is authoritative for this manual, read-only test.
+  // Do not gate OCR on a full-frame layout/detection pass.
+  const saved=(await pool.query<NormalizedRoi>(
+   'SELECT x,y,width,height FROM camera_ocr_roi WHERE camera_id=$1 AND oa_id=$2',[cameraId,tenant.id]
+  )).rows[0];
   const image=`data:image/png;base64,${frame.image.toString('base64')}`;
   const dimensions={imageWidth:frame.width,imageHeight:frame.height};
-  if(result.status==='LOCKED')return Response.json({status:'READ',number:result.text,lastDigit:result.lastDigit,parity:result.parity,confidence:result.confidence,rawText:result.reading.rawText,roi:result.roi,image,capturedAt:frame.capturedAt,...dimensions},{headers});
-  const guess=previewGuess(result);
-  if(guess)return Response.json({...guess,rawText:result.rawText??'',image,capturedAt:frame.capturedAt,...dimensions,note:'PREVIEW_ONLY_NO_ROUND_NO_SETTLEMENT'},{headers});
-  return Response.json({status:'REVIEW_REQUIRED',reason:result.reason,rawText:result.rawText??'',confidence:result.confidence??0,roi:result.roi??null,image,capturedAt:frame.capturedAt,...dimensions},{headers});
+  const common={image,capturedAt:frame.capturedAt,...dimensions,note:'PREVIEW_ONLY_NO_ROUND_NO_SETTLEMENT'};
+  if(!validNormalizedRoi(saved))return Response.json({status:'REVIEW_REQUIRED',reason:'ocr_roi_not_saved',rawText:'',confidence:0,roi:null,...common},{headers});
+  const roi=roiForFrame(saved,frame);
+  const reading=await new TesseractOcrAdapter().read(frame,roi);
+  const cropImage=`data:image/png;base64,${reading.crop.toString('base64')}`;
+  const data={...common,roi,cropImage,rawText:reading.rawText,confidence:reading.confidence,attempts:reading.attempts};
+  let number:string;
+  try{number=validateScaleDisplay(reading.normalizedText)}
+  catch{return Response.json({status:'REVIEW_REQUIRED',reason:'ambiguous_display',...data},{headers})}
+  const lastDigit=extractLastDisplayedDigit(number),parity=determineParity(lastDigit);
+  const reason=reading.conflict?'conflicting_ocr_results':
+   reading.blurScore<defaultOcrConfig.minimumBlurScore?'blurry_image':
+   reading.glareFraction>defaultOcrConfig.maximumGlareFraction?'glare':
+   reading.confidence<defaultOcrConfig.minimumConfidence?'low_confidence':null;
+  return Response.json({status:reason?'READ_UNVERIFIED':'READ',reason,number,lastDigit,parity,...data},{headers});
  }catch(error){return Response.json({error:error instanceof Error&&error.message==='early_frame'?'early_frame':'ocr_simulation_unavailable'},{status:503,headers})}
  finally{active.delete(cameraId);await source?.close().catch(()=>{})}
 }
