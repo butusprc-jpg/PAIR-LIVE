@@ -4,6 +4,9 @@ import {createHash,randomUUID} from 'node:crypto';
 import {Pool,type PoolClient} from 'pg';
 import {assertTestTarget,migrationManifest} from '../lib/migration-manifest';
 import {database} from '../lib/server/db';
+import {issueSession} from '../lib/server/member-session-store';
+import {spawn} from 'node:child_process';
+import {createServer} from 'node:net';
 
 const raw=process.env.MEMBER_PERF_TEST_DATABASE_URL;
 function percentiles(samples:number[]){const sorted=[...samples].sort((a,b)=>a-b);return {p50:sorted[Math.ceil(sorted.length*.50)-1],p95:sorted[Math.ceil(sorted.length*.95)-1],p99:sorted[Math.ceil(sorted.length*.99)-1]}}
@@ -22,8 +25,10 @@ test('20 and 100 concurrent synthetic entries preserve wallet and ledger totals'
   await db.query("UPDATE member_wallet_runtime_state SET phase='WALLET_ACTIVE',enabled=true,ever_cutover=true,cutover_at=now() WHERE id=1");
   const {startManualRound,submitDemoEntry}=await import('../lib/rounds/store');
   const round=(await startManualRound(randomUUID())).round;
+  const batches:string[][]=[];
   for(const count of [20,100]){
    const members:string[]=(await db.query<{id:string}>("INSERT INTO members(display_name,demo_points) SELECT 'perf-'||g::text,1000 FROM generate_series(1,$1::int) g RETURNING id",[count])).rows.map(row=>String(row.id));
+   batches.push(members);
    const setup=await db.connect();try{for(const memberId of members){await setup.query("SELECT set_config('pair_live.member_id',$1,false)",[memberId]);await setup.query('INSERT INTO member_wallets(member_id,available_points) VALUES($1,1000)',[memberId])}}finally{setup.release()}
    const start=performance.now();
    const durations=await Promise.all(members.map(async memberId=>{const began=performance.now();await submitDemoEntry(memberId,round.id,{side:'even',demoPoints:10,idempotencyKey:randomUUID()});return performance.now()-began}));
@@ -33,6 +38,16 @@ test('20 and 100 concurrent synthetic entries preserve wallet and ledger totals'
    const check:PoolClient=await db.connect();try{for(const memberId of members){await check.query("SELECT set_config('pair_live.member_id',$1,false)",[memberId]);assert.equal(Number((await check.query<{available_points:string}>('SELECT available_points FROM member_wallets WHERE member_id=$1',[memberId])).rows[0].available_points),990);assert.equal((await check.query<{n:number}>("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_USE'",[memberId])).rows[0].n,1);assert.equal((await check.query<{n:number}>('SELECT count(*)::int AS n FROM round_entries WHERE round_id=$1 AND member_id=$2',[round.id,memberId])).rows[0].n,1)}}finally{check.release()}
    const p=percentiles(durations);console.log(`member_entry_perf count=${count} total_ms=${total.toFixed(1)} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`);
   }
+  const sessions=new Map<string,string>();for(const memberId of batches.flat()){await db.query("INSERT INTO member_identities(member_id,provider,provider_user_id,provider_channel_id) VALUES($1,'line',$2,'login-perf')",[memberId,`U${randomUUID().replaceAll('-','')}`]);sessions.set(memberId,await issueSession(db,memberId))}
+  const socket=createServer();await new Promise<void>(resolve=>socket.listen(0,'127.0.0.1',resolve));const address=socket.address();if(!address||typeof address==='string')throw Error('perf_port_unavailable');const port=address.port;await new Promise<void>(resolve=>socket.close(()=>resolve()));
+  const origin=`http://127.0.0.1:${port}`,web=spawn(process.execPath,['node_modules/next/dist/bin/next','start','-p',String(port),'-H','127.0.0.1'],{cwd:process.cwd(),env:{...process.env,DATABASE_URL:url.toString(),CONNECTED_LINE_OA_ID:oa,LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:token},stdio:'ignore'});
+  try{
+   let ready=false;for(let attempt=0;attempt<150;attempt++){if(web.exitCode!==null)throw Error('perf_web_exited');try{const response=await fetch(`${origin}/api/auth/session`);if(response.status===401){ready=true;break}}catch{}await new Promise(resolve=>setTimeout(resolve,100))}if(!ready)throw Error('perf_web_not_ready');
+   for(const members of batches){const samples=await Promise.all(members.map(async memberId=>{const began=performance.now();const response=await fetch(`${origin}/api/auth/session`,{headers:{Cookie:`pair_member_session=${sessions.get(memberId)}`}});assert.equal(response.status,200);assert.match(response.headers.get('server-timing')??'',/session_query;dur=/);return performance.now()-began}));const p=percentiles(samples);console.log(`member_session_perf count=${members.length} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`)}
+   for(const members of batches){const started=performance.now();const samples=await Promise.all(members.map(async memberId=>{const began=performance.now();const response=await fetch(`${origin}/api/round/entries`,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',Cookie:`pair_member_session=${sessions.get(memberId)}`},body:JSON.stringify({roundId:round.id,side:'even',demoPoints:10,idempotencyKey:randomUUID()})});const duration=performance.now()-began;const timing=response.headers.get('server-timing')??'';assert.equal(response.status,201,`entry response ${response.status}`);assert.match(timing,/auth;dur=/);assert.match(timing,/db_connect;dur=/);assert.match(timing,/round_lock;dur=/);assert.match(timing,/wallet_write;dur=/);return duration}));const p=percentiles(samples);console.log(`member_http_perf count=${members.length} total_ms=${(performance.now()-started).toFixed(1)} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`)}
+  }finally{await new Promise<void>(resolve=>{if(web.exitCode!==null||web.signalCode!==null){resolve();return}web.once('exit',()=>resolve());web.kill('SIGTERM')})}
+  assert.equal(Number((await db.query('SELECT even_people FROM rounds WHERE id=$1',[round.id])).rows[0].even_people),240);
+  const final=await db.connect();try{for(const memberId of batches.flat()){await final.query("SELECT set_config('pair_live.member_id',$1,false)",[memberId]);assert.equal(Number((await final.query<{available_points:string}>('SELECT available_points FROM member_wallets WHERE member_id=$1',[memberId])).rows[0].available_points),980);assert.equal((await final.query<{n:number}>("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_USE'",[memberId])).rows[0].n,2);assert.equal((await final.query<{n:number}>('SELECT count(*)::int AS n FROM round_entries WHERE round_id=$1 AND member_id=$2',[round.id,memberId])).rows[0].n,2)}}finally{final.release()}
  }finally{
   if(process.env.DATABASE_URL?.includes(schema))await database().end().catch(()=>{});
   for(const [key,value] of Object.entries(prior)){if(value===undefined)delete process.env[key];else process.env[key]=value}

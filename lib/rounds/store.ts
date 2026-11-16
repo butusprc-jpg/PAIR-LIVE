@@ -9,6 +9,7 @@ import {enqueueClosingBroadcast} from '../line/round-broadcast';
 import {appliedBusinessSettings,readBusinessSettings,shopStatusAt} from './business-settings';
 import {settlementRateFromAdminFee} from './admin-fee';
 import {startAutomaticCountdown} from './automatic-countdown';
+import type {RequestTiming} from '../server/performance-timing';
 function asIso(value:unknown){return value instanceof Date?value.toISOString():new Date(String(value)).toISOString()}
 function mapRound(row:Record<string,unknown>):Round{return {id:String(row.id),opensAt:asIso(row.opens_at),closesAt:asIso(row.closes_at),durationMinutes:Number(row.duration_minutes),status:row.status as Round['status'],closedAt:row.closed_at?asIso(row.closed_at):null,settledAt:row.settled_at?asIso(row.settled_at):null,resultNumber:row.result_number?String(row.result_number):null}}
 export type RoundRuleKey='minEntryPoints'|'maxEntryPoints'|'alertBeforeClose';
@@ -33,7 +34,7 @@ async function assertConnectedOaInTransaction(client:PoolClient){
  if(result.rowCount!==1||!result.rows[0].enabled||!result.rows[0].active||result.rows[0].verified_token_hash!==hash)throw new RoundError('oa_service_inactive',403);
  return String(result.rows[0].id);
 }
-async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await database().connect();try{await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock_shared(74021602)');const result=await fn(client);await client.query('COMMIT');return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
+async function inTransaction<T>(fn:(client:PoolClient)=>Promise<T>,timing?:RequestTiming){const connect=()=>database().connect(),client=timing?await timing.measure('db_connect',connect):await connect();try{await client.query('BEGIN');const lock=()=>client.query('SELECT pg_advisory_xact_lock_shared(74021602)');if(timing)await timing.measure('tx_lock',lock);else await lock();const result=await fn(client);const commit=()=>client.query('COMMIT');if(timing)await timing.measure('tx_commit',commit);else await commit();return result}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
 async function dbNow(client:PoolClient){const result=await client.query('SELECT clock_timestamp() AS now');return new Date(result.rows[0].now).toISOString()}
 async function transition(client:PoolClient){
  const now=await dbNow(client);
@@ -109,31 +110,32 @@ export async function updateRoundSettings(duration:number,mode?:'manual'|'auto')
  return {previous:old,next:duration,mode:'manual' as const};
  })}
 export async function updateDurationForNextRound(duration:number){return updateRoundSettings(duration)}
-export async function submitDemoEntry(memberId:string,roundId:string,input:EntryInput){validateEntry(input);if(!/^\d+$/.test(roundId))throw new RoundError('invalid_round_id');return inTransaction(async client=>{
+export async function submitDemoEntry(memberId:string,roundId:string,input:EntryInput,timing?:RequestTiming){validateEntry(input);if(!/^\d+$/.test(roundId))throw new RoundError('invalid_round_id');return inTransaction(async client=>{
  await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);
  // Lock the round before checking database time; the worker takes the same lock when closing it.
  await assertConnectedOaInTransaction(client);
- const found=await client.query('SELECT * FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id() FOR UPDATE',[roundId]);
+ const roundQuery=()=>client.query('SELECT * FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id() FOR UPDATE',[roundId]);
+ const found=timing?await timing.measure('round_lock',roundQuery):await roundQuery();
  if(!found.rows[0])throw new RoundError('round_not_found',404);
  const round=found.rows[0];
  const prior=await client.query('SELECT * FROM round_entries WHERE member_id=$1 AND idempotency_key=$2',[memberId,input.idempotencyKey]);
  if(prior.rows[0]){const row=prior.rows[0];if(String(row.round_id)!==roundId||row.side!==input.side||Number(row.demo_points)!==input.demoPoints)throw new RoundError('idempotency_conflict',409);return {id:row.id,roundId:String(row.round_id),status:row.status,replayed:true}}
  const now=await dbNow(client);
  if(round.status!=='OPEN'||new Date(now)>=new Date(round.closes_at)||round.countdown_ends_at&&!round.countdown_stopped_at&&new Date(now)>=new Date(round.countdown_ends_at))throw new RoundError('round_closed',409);
- const rules=await appliedRules(client,roundId);
+ const rules=timing?await timing.measure('rules_query',()=>appliedRules(client,roundId)):await appliedRules(client,roundId);
  if(input.demoPoints<rules.minEntryPoints||input.demoPoints>rules.maxEntryPoints)throw new RoundError('entry_points_out_of_range');
- const business=await appliedBusinessSettings(client,roundId);
+ const business=timing?await timing.measure('business_query',()=>appliedBusinessSettings(client,roundId)):await appliedBusinessSettings(client,roundId);
  if(business.maxRoundPoints!==null&&BigInt(round.even_points)+BigInt(round.odd_points)+BigInt(input.demoPoints)>BigInt(business.maxRoundPoints))throw new RoundError('round_points_limit_exceeded',409);
- const walletEnabled=(await walletPathFromDatabase(client))==='wallet';
+ const walletEnabled=(timing?await timing.measure('wallet_path',()=>walletPathFromDatabase(client)):await walletPathFromDatabase(client))==='wallet';
  let walletBalance:number|undefined;
  if(walletEnabled){const member=await client.query("SELECT id FROM members WHERE id=$1 AND status='active'",[memberId]);if(!member.rows[0])throw new RoundError('member_unavailable',403);
-  try{const applied=await applyWalletMutationWithClient(client,{memberId,type:'DEMO_USE',points:input.demoPoints,referenceId:`ROUND_${roundId}_${input.idempotencyKey}`,idempotencyKey:input.idempotencyKey,actor:'round-engine',source:'round'});walletBalance=applied.wallet.availablePoints}catch(error){const code=error instanceof Error?error.message:'';if(code==='INSUFFICIENT_POINTS')throw new RoundError('insufficient_demo_points',409);if(code==='FROZEN')throw new RoundError('wallet_frozen',409);if(code==='NOT_ACTIVATED')throw new RoundError('wallet_not_activated',503);throw error}
+  try{const mutation=()=>applyWalletMutationWithClient(client,{memberId,type:'DEMO_USE' as const,points:input.demoPoints,referenceId:`ROUND_${roundId}_${input.idempotencyKey}`,idempotencyKey:input.idempotencyKey,actor:'round-engine',source:'round'});const applied=timing?await timing.measure('wallet_write',mutation):await mutation();walletBalance=applied.wallet.availablePoints}catch(error){const code=error instanceof Error?error.message:'';if(code==='INSUFFICIENT_POINTS')throw new RoundError('insufficient_demo_points',409);if(code==='FROZEN')throw new RoundError('wallet_frozen',409);if(code==='NOT_ACTIVATED')throw new RoundError('wallet_not_activated',503);throw error}
  }else{const member=await client.query('UPDATE members SET demo_points=demo_points-$1,updated_at=clock_timestamp() WHERE id=$2 AND status=\'active\' AND demo_points>=$1 RETURNING id',[input.demoPoints,memberId]);if(!member.rows[0])throw new RoundError('member_unavailable_or_insufficient_points',409)}
  const inserted=await client.query('INSERT INTO round_entries(round_id,member_id,side,demo_points,idempotency_key) VALUES($1,$2,$3,$4,$5) RETURNING id,status',[roundId,memberId,input.side,input.demoPoints,input.idempotencyKey]);
  await client.query("UPDATE rounds SET even_people=even_people+CASE WHEN $2='even' THEN 1 ELSE 0 END,even_points=even_points+CASE WHEN $2='even' THEN $3::int ELSE 0 END,odd_people=odd_people+CASE WHEN $2='odd' THEN 1 ELSE 0 END,odd_points=odd_points+CASE WHEN $2='odd' THEN $3::int ELSE 0 END WHERE id=$1",[roundId,input.side,input.demoPoints]);
  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'member','DEMO_ENTRY_ACCEPTED',jsonb_build_object('entry_id',$2::text))",[roundId,inserted.rows[0].id]);
  return {id:inserted.rows[0].id,roundId,status:'PENDING',replayed:false,walletBalance};
- })}
+ },timing)}
 export async function roundTotals(roundId:string){const result=await database().query('SELECT even_people,even_points,odd_people,odd_points FROM rounds WHERE id=$1 AND epoch_id=current_round_epoch_id()',[roundId]);const row=result.rows[0];return {even:{people:Number(row?.even_people||0),points:Number(row?.even_points||0)},odd:{people:Number(row?.odd_people||0),points:Number(row?.odd_points||0)}}}
 /** Admin action. The round lock serializes stop/cancel with entries and worker transitions. */
 export async function decideRound(adminId:string,roundId:string,action:'stop'|'cancel'){
