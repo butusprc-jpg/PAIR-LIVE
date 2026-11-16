@@ -22,10 +22,12 @@ export async function GET(request:Request){
    CASE WHEN c.slot=1 THEN v.display_enabled ELSE c.display_enabled END AS "displayEnabled",c.revision
    FROM site_cameras c LEFT JOIN vdo_ninja_tenants v ON v.oa_id=c.oa_id AND c.slot=1
    WHERE c.camera_id=$1 AND c.oa_id=$2`,[cameraId,tenant.id])).rows[0];
-  const camera=await readCamera();if(!camera||!camera.displayEnabled||!tenant.active) return Response.json({error:'live_camera_unavailable'},{status:409,headers});
-  source=chooseLiveFrameSource(camera,tenant.id,{VDO_NINJA:()=>new VdoLiveFrameSource()}) as VdoLiveFrameSource;
-  const {frame}=await captureLiveFrame(source,camera,{x:0,y:0,width:10000,height:10000});
-  const latest=await readCamera();if(!latest||latest.streamId!==camera.streamId||latest.revision!==camera.revision||!latest.displayEnabled)throw new Error('camera_changed_during_capture');
+  const camera=await readCamera();if(!camera||!tenant.active||!camera.streamId) return Response.json({error:'live_camera_unavailable'},{status:409,headers});
+  // Admin-only OCR preview is independent from whether the member LIVE display is enabled.
+  const previewCamera={...camera,displayEnabled:true};
+  source=chooseLiveFrameSource(previewCamera,tenant.id,{VDO_NINJA:()=>new VdoLiveFrameSource()}) as VdoLiveFrameSource;
+  const {frame}=await captureLiveFrame(source,previewCamera,{x:0,y:0,width:10000,height:10000});
+  const latest=await readCamera();if(!latest||latest.streamId!==camera.streamId||latest.revision!==camera.revision)throw new Error('camera_changed_during_capture');
   return new Response(new Uint8Array(frame.image),{headers:{...headers,'Content-Type':'image/png'}});
  }catch{return Response.json({error:'live_capture_unavailable'},{status:503,headers})}
  finally{await source?.close()}
