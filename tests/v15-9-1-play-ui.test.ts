@@ -26,11 +26,11 @@ test('PLAY amount checks integer, current round limits, balance, and wallet read
  assert.equal(entryFormError({...ready,side:null}),'กรุณาเลือกคู่หรือคี่');
 });
 
-test('ADMIN play rules are a main tab with a directly visible editor and role-gated save',async()=>{
+test('ADMIN play rules are in settings with a directly visible editor and role-gated save',async()=>{
  const admin=await readFile(new URL('../app/admin/page.tsx',import.meta.url),'utf8');
  const css=await readFile(new URL('../app/globals.css',import.meta.url),'utf8');
- assert.match(admin,/id:'play-rules',label:'กติกาการเล่น'/);
- assert.match(admin,/tab==='play-rules'&&<section className="card admin-play-rules"/);
+ assert.match(admin,/id:'settings',label:'ตั้งค่า'/);
+ assert.match(admin,/tab==='settings'&&<section className="card admin-play-rules"/);
  assert.match(admin,/role==='admin'\?<><label htmlFor="admin-play-rules-content"/);
  assert.match(admin,/<textarea id="admin-play-rules-content"[^>]+value=\{playRules\}/);
  assert.match(admin,/mutation\('\/api\/admin\/play-rules'/);
