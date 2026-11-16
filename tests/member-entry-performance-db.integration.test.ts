@@ -48,11 +48,14 @@ test('20 and 100 concurrent synthetic entries preserve wallet and ledger totals'
    for(const members of batches){
     const responses=await Promise.all(members.map(async memberId=>{
      const began=performance.now();const response=await fetch(`${origin}/api/auth/session`,{headers:{Cookie:`pair_member_session=${sessions.get(memberId)}`}});
-     assert.equal(response.status,200);const timing=response.headers.get('server-timing')??'';assert.match(timing,/session_query;dur=/);assert.match(timing,/session_rotate;dur=/);
+     assert.equal(response.status,200);const timing=response.headers.get('server-timing')??'';assert.match(timing,/session_query;dur=/);assert.doesNotMatch(timing,/session_rotate;dur=/,'recent session must not issue a rotation UPDATE');
      return {duration:performance.now()-began,timing};
     }));
     const p=percentiles(responses.map(item=>item.duration));console.log(`member_session_perf count=${members.length} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`);
-    logPhases('session',members.length,responses.map(item=>item.timing),['session_query','session_rotate']);
+    logPhases('session',members.length,responses.map(item=>item.timing),['session_query']);
+   }
+   for(const [path,kind] of [['/api/member/wallet','wallet'],['/api/round/current','round']] as const){
+    for(const members of batches){const responses=await Promise.all(members.map(async memberId=>{const began=performance.now();const response=await fetch(`${origin}${path}`,{headers:{Cookie:`pair_member_session=${sessions.get(memberId)}`}});assert.equal(response.status,200,`${kind} response ${response.status}`);return {duration:performance.now()-began,timing:response.headers.get('server-timing')??''}}));const p=percentiles(responses.map(item=>item.duration));console.log(`member_${kind}_perf count=${members.length} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`);if(kind==='round')logPhases('round',members.length,responses.map(item=>item.timing),['auth','round_query','totals_query','countdown_query'])}
    }
    for(const members of batches){
     const started=performance.now();

@@ -6,10 +6,12 @@ on:
       - '.github/workflows/v16-4-performance.yml'
       - 'tests/member-entry-performance-db.integration.test.ts'
       - 'tests/performance-timing.test.ts'
+      - 'tests/member-session-rotation.test.ts'
       - 'lib/client/member-startup.ts'
       - 'lib/client/adaptive-poll.ts'
       - 'lib/client/performance-timing.ts'
       - 'lib/server/performance-timing.ts'
+      - 'lib/server/member-session-store.ts'
       - 'lib/rounds/store.ts'
       - 'app/api/round/entries/route.ts'
       - 'app/api/round/current/route.ts'
@@ -53,7 +55,9 @@ jobs:
           npm run db:migrate -- --apply
           npm run db:migrate -- --validate
       - name: Member startup and polling tests
-        run: node --import tsx --test tests/member-startup.test.ts tests/adaptive-poll.test.ts tests/performance-timing.test.ts
+        run: node --import tsx --test tests/member-startup.test.ts tests/adaptive-poll.test.ts tests/performance-timing.test.ts tests/member-session-rotation.test.ts
+      - name: Remembered session PostgreSQL integration
+        run: node --import tsx --test tests/member-session-db.integration.test.ts
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Build
