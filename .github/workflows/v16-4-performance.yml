@@ -1,0 +1,56 @@
+name: V16.4 member performance
+on:
+  push:
+    branches: [feat/pair-live-v16-1-real-camera-ocr]
+    paths:
+      - '.github/workflows/v16-4-performance.yml'
+      - 'tests/member-entry-performance-db.integration.test.ts'
+      - 'lib/client/member-startup.ts'
+      - 'lib/client/adaptive-poll.ts'
+      - 'lib/rounds/store.ts'
+      - 'app/api/round/entries/route.ts'
+      - 'app/api/auth/session/route.ts'
+      - 'app/page.tsx'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  performance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      MEMBER_PERF_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Guard disposable localhost target
+        run: node --import tsx --input-type=module -e "import {assertTestTarget} from './lib/migration-manifest.ts'; assertTestTarget(process.env.MEMBER_PERF_TEST_DATABASE_URL)"
+      - name: Migration Guard
+        run: |
+          npm run db:migrate -- --apply
+          npm run db:migrate -- --validate
+      - name: Member startup and polling tests
+        run: node --import tsx --test tests/member-startup.test.ts tests/adaptive-poll.test.ts
+      - name: Concurrent synthetic entries
+        run: node --import tsx --test tests/member-entry-performance-db.integration.test.ts
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
