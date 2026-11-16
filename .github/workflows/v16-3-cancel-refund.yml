@@ -1,0 +1,46 @@
+name: V16.3 cancel refund integration
+on:
+  push:
+    branches: [feat/pair-live-v16-1-real-camera-ocr]
+    paths:
+      - '.github/workflows/v16-3-cancel-refund.yml'
+      - 'tests/wallet-round-db.integration.test.ts'
+      - 'tests/automatic-countdown.test.ts'
+      - 'lib/rounds/**'
+      - 'components/AdminRound*.tsx'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cancel-refund:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      WALLET_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify isolated localhost migration target
+        run: node --import tsx --input-type=module -e "import {assertTestTarget} from './lib/migration-manifest.ts'; assertTestTarget(process.env.WALLET_TEST_DATABASE_URL)"
+      - name: Cancel refund integration
+        run: node --import tsx --test tests/wallet-round-db.integration.test.ts
+      - name: Related unit tests
+        run: node --import tsx --test tests/round-core.test.ts tests/camera-countdown.test.ts
+      - name: TypeScript
+        run: npx tsc --noEmit

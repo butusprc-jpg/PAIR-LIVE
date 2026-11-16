@@ -38,6 +38,10 @@ test('PostgreSQL wallet and round entry commit/rollback, replay and concurrency'
   counts=await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member]);assert.equal(Number(counts.rows[0].available_points),20);
   const ledger=await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_USE'",[member]);assert.equal(ledger.rows[0].n,2);
   const entries=await appPool.query('SELECT count(*)::int AS n FROM round_entries WHERE member_id=$1',[member]);assert.equal(entries.rows[0].n,2);
+  const second=(await appPool.query("INSERT INTO members(display_name,demo_points) VALUES('wallet-test-second',200) RETURNING id")).rows[0].id as string;
+  await appPool.query('INSERT INTO member_wallets(member_id,available_points) VALUES($1,200)',[second]);
+  const secondEntry=await submitDemoEntry(second,roundId,{side:'odd',demoPoints:40,idempotencyKey:randomUUID()});assert.equal(secondEntry.replayed,false);
+  assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[second])).rows[0].available_points),160);
   const actor=randomUUID();assert.equal((await decideRound(actor,roundId,'stop')).status,'SCANNING');
   assert.equal((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member])).rows[0].available_points,'20');
   await appPool.query("CREATE FUNCTION fail_round_refund() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.type='DEMO_REFUND' THEN RAISE EXCEPTION 'forced_refund_failure'; END IF; RETURN NEW; END$$");
@@ -51,7 +55,26 @@ test('PostgreSQL wallet and round entry commit/rollback, replay and concurrency'
   assert.deepEqual([cancel.replayed,replayCancel.replayed].sort(),[false,true]);
   assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member])).rows[0].available_points),100);
   assert.equal((await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_REFUND'",[member])).rows[0].n,2);
+  assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[second])).rows[0].available_points),200);
+  assert.equal((await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_REFUND'",[second])).rows[0].n,1);
+  assert.equal((await appPool.query("SELECT count(*)::int AS n FROM round_entries WHERE round_id=$1 AND status='CANCELLED'",[roundId])).rows[0].n,3);
+  for(const [id,initial] of [[member,100],[second,200]] as const){
+   const ledgerTotals: {rows:{delta:number}[]}=await appPool.query("SELECT coalesce(sum(CASE WHEN type='DEMO_REFUND' THEN points WHEN type='DEMO_USE' THEN -points ELSE 0 END),0)::int AS delta FROM member_wallet_ledger WHERE member_id=$1",[id]);
+   assert.equal(Number(ledgerTotals.rows[0].delta),0);
+   assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[id])).rows[0].available_points),initial);
+  }
   assert.equal((await appPool.query("SELECT count(*)::int AS n FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_CANCELLED'",[roundId])).rows[0].n,1);
+  const timed=await startManualRound(actor);const timedId=timed.round.id;
+  await submitDemoEntry(member,timedId,{side:'even',demoPoints:10,idempotencyKey:randomUUID()});
+  await appPool.query(`WITH t AS (SELECT clock_timestamp() AS now) UPDATE rounds SET opens_at=t.now-interval '5 minutes',closes_at=t.now,closed_at=NULL FROM t WHERE id=$1`,[timedId]);
+  const racing=await Promise.allSettled([tickRoundEngine(),decideRound(actor,timedId,'cancel')]);
+  assert.equal(racing.filter(item=>item.status==='fulfilled').length,2);
+  assert.equal((await appPool.query('SELECT status FROM rounds WHERE id=$1',[timedId])).rows[0].status,'CANCELLED');
+  assert.equal((await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_REFUND'",[member])).rows[0].n,3);
+  assert.equal(Number((await appPool.query('SELECT available_points FROM member_wallets WHERE member_id=$1',[member])).rows[0].available_points),100);
+  const settled=await startManualRound(actor);await appPool.query("UPDATE rounds SET status='SETTLED',closed_at=clock_timestamp(),settled_at=clock_timestamp() WHERE id=$1",[settled.round.id]);
+  await assert.rejects(decideRound(actor,settled.round.id,'cancel'),/round_already_settled/);
+  assert.equal((await appPool.query("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_REFUND'",[member])).rows[0].n,3);
   await database().end();
  }finally{if(originalUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=originalUrl;if(originalGate===undefined)delete process.env.PAIR_WALLET_CUTOVER_VERIFIED;else process.env.PAIR_WALLET_CUTOVER_VERIFIED=originalGate;if(originalOa===undefined)delete process.env.CONNECTED_LINE_OA_ID;else process.env.CONNECTED_LINE_OA_ID=originalOa;if(originalToken===undefined)delete process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;else process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=originalToken;await appPool?.end().catch(()=>{});await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});await admin.end()}
 });
