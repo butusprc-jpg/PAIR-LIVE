@@ -13,6 +13,13 @@ export async function initLIFF(){
  if(!liffId)throw new Error('line_not_configured');
  ready??=import('@line/liff').then(({default:liff})=>liff.init({liffId}).then(()=>liff)).catch(error=>{ready=null;throw error});
  const client=await ready;
+ // LIFF exposes its environment language, not a language field on the profile.
+ let language:string|undefined;
+ try{language=client.getLanguage()}catch{/* SDK language is optional */}
+ if(typeof language==='string'){
+  window.__pairLiveLineLanguage=language;
+  window.dispatchEvent(new Event('pair-live:provider-language'));
+ }
  if(!client.isLoggedIn()){
   if(shouldRedirectLogin(window.sessionStorage))client.login({redirectUri:window.location.href});
   return null;
