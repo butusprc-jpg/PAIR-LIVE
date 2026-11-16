@@ -7,7 +7,7 @@ import {assertTestTarget} from '../lib/migration-manifest';
 import {readResultAnnouncement} from '../lib/rounds/result-announcement';
 
 const raw=process.env.RESULT_ANNOUNCEMENT_TEST_DATABASE_URL;
-test('member announcement reads only recent settled OCR evidence',{skip:!raw},async()=>{
+test('member announcement rejects settlement-only, unverified, cancelled and review results',{skip:!raw},async()=>{
  const pool=new Pool({connectionString:assertTestTarget(raw)}),client=await pool.connect();
  async function insertRound(number:string,status:'SETTLED'|'CANCELLED'|'REVIEW_REQUIRED'){
   const settled=status==='SETTLED';
@@ -27,16 +27,14 @@ test('member announcement reads only recent settled OCR evidence',{skip:!raw},as
   const first=await insertRound('5.8346','SETTLED');
   assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement,null,'a settled row without verified OCR evidence cannot announce');
   await addEvidence(first,'5.8346',true);
-  const firstResult=(await readResultAnnouncement(client as unknown as Pool)).announcement;
-  assert.equal(firstResult?.lastDigit,'6');assert.equal(firstResult?.roundId,first);
-  assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement?.confirmedAt,firstResult?.confirmedAt,'polling cannot extend the deadline');
+  assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement,null,'a legacy VERIFIED field without an explicit decision cannot announce');
   await client.query("UPDATE rounds SET settled_at=clock_timestamp()-interval '11 seconds' WHERE id=$1",[first]);
   assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement,null,'expired announcement stays hidden');
   const second=await insertRound('5.8343','SETTLED');await addEvidence(second,'5.8343',false);
   assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement,null,'unverified evidence stays hidden');
   await addEvidence(second,'5.8343',true);
-  assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement?.lastDigit,'3');
+  assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement,null,'settlement does not create an OCR announcement');
   await insertRound('9.9999','CANCELLED');await insertRound('8.8888','REVIEW_REQUIRED');
-  assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement?.roundId,second,'cancelled and review rounds never replace a confirmed result');
+  assert.equal((await readResultAnnouncement(client as unknown as Pool)).announcement,null,'cancelled and review rounds never announce');
  }finally{await client.query('ROLLBACK').catch(()=>{});client.release();await pool.end()}
 });

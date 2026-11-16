@@ -14,15 +14,17 @@ import type {LiveFrameSource} from '../lib/ocr/live-frame-source';
 import {candidateImageKeys,LocalCandidateImageStorage,type CandidateImageStorage} from '../lib/ocr/candidate-image-storage';
 import {validatePng} from '../lib/ocr/evidence';
 import {deleteCandidateImage,deleteCandidateImages,listCandidateImages,readCandidateImage} from '../lib/ocr/candidate-image-admin';
+import {verifyCandidateEvidence} from '../lib/ocr/automatic-settlement';
+import {readResultAnnouncement} from '../lib/rounds/result-announcement';
 
 test('two OCR workers lock one candidate after round close without settlement or LINE',{skip:!process.env.OCR_CANDIDATE_TEST_DATABASE_URL},async()=>{
  const raw=process.env.OCR_CANDIDATE_TEST_DATABASE_URL!,root=new Pool({connectionString:assertTestTarget(raw)}),schema='ocr_candidate_'+randomUUID().replaceAll('-','');let db:Pool|undefined,createdPublicBinding=false;const imageRoot=await mkdtemp(join(tmpdir(),'pair-ocr-images-'));
- const keys=['DATABASE_URL','CONNECTED_LINE_OA_ID','LINE_MESSAGING_CHANNEL_ACCESS_TOKEN'],prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+ const keys=['DATABASE_URL','CONNECTED_LINE_OA_ID','LINE_MESSAGING_CHANNEL_ACCESS_TOKEN','LINE_LOGIN_CHANNEL_ID'],prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
  try{
   if(!(await root.query("SELECT to_regclass('public.external_live_role_bindings') AS existing")).rows[0].existing){await root.query('CREATE TABLE public.external_live_role_bindings(role_name name,oa_id uuid)');createdPublicBinding=true}
   await root.query(`CREATE SCHEMA ${schema}`);const url=new URL(raw);url.searchParams.set('options',`-csearch_path=${schema}`);db=new Pool({connectionString:url.toString(),max:8});process.env.DATABASE_URL=url.toString();
   for(const migration of await migrationManifest())await db.query(migration.sql);
-  const token='synthetic-ocr-test-token',lineOa='@synthetic-ocr';process.env.CONNECTED_LINE_OA_ID=lineOa;process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=token;
+  const token='synthetic-ocr-test-token',lineOa='@synthetic-ocr';process.env.CONNECTED_LINE_OA_ID=lineOa;process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=token;process.env.LINE_LOGIN_CHANNEL_ID='login-test';
   const oaId=(await db.query("INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at,verified_token_hash) VALUES($1,'OCR Test',true,now()+interval '1 day',$2) RETURNING id",[lineOa,createHash('sha256').update(token).digest('hex')])).rows[0].id;
   const admin=(await db.query("INSERT INTO admin_identities(provider,provider_channel_id,provider_user_id,display_name,role) VALUES('line','login-test',$1,'Admin','admin') RETURNING id",['U'+'a'.repeat(32)])).rows[0].id;
   const site=(await db.query("INSERT INTO camera_sites(oa_id,name) VALUES($1,'Test Site') RETURNING site_id",[oaId])).rows[0].site_id;
@@ -30,6 +32,7 @@ test('two OCR workers lock one candidate after round close without settlement or
   const camera=(await db.query("INSERT INTO site_cameras(site_id,oa_id,slot,name,stream_id,display_enabled) VALUES($1,$2,1,'Test Camera','synthetic123',true) RETURNING camera_id",[site,oaId])).rows[0].camera_id;
   await db.query('INSERT INTO camera_ocr_roi(camera_id,oa_id,x,y,width,height,updated_by) VALUES($1,$2,0,0,6500,10000,$3)',[camera,oaId,admin]);
   const round=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,settlement_oa_id) VALUES(current_date,now()-interval '10 minutes',now()-interval '5 minutes',5,'OPEN',$1) RETURNING id",[oaId])).rows[0].id;
+  await db.query('INSERT INTO round_settlement_config(round_id,oa_id,rate_numerator,rate_denominator,configured_by) VALUES($1,$2,190,100,$3)',[round,oaId,admin]);
   const {tickRoundEngine}=await import('../lib/rounds/store');
   assert.equal((await tickRoundEngine()).round?.status,'CLOSED');
   const closedAt=(await db.query('SELECT closed_at FROM rounds WHERE id=$1',[round])).rows[0].closed_at as Date;assert.ok(closedAt);
@@ -54,11 +57,32 @@ test('two OCR workers lock one candidate after round close without settlement or
   const full=(await restarted.get(image.original_object_key))!,crop=(await restarted.get(image.crop_object_key))!;
   assert.equal(validatePng(full),image.original_sha256.trim());
   assert.equal(validatePng(crop),image.crop_sha256.trim());
+  assert.equal((await readResultAnnouncement(db)).announcement,null,'raw candidate cannot announce');
+  await assert.rejects(verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.61'}),/candidate_confirmation_mismatch/);
+  const missingCrop:CandidateImageStorage={putImmutable:(key,data)=>storage.putImmutable(key,data),get:key=>key.endsWith('/crop.png')?Promise.resolve(null):storage.get(key),remove:key=>storage.remove(key)};
+  await assert.rejects(verifyCandidateEvidence(db,String(round),missingCrop,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'}),/candidate_image_missing/);
+  assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_verification_decisions')).rows[0].n,0);
+  const approved=await Promise.all([verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'}),verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'})]);
+  assert.equal(approved[0].evidenceId,approved[1].evidenceId,'repeated confirmation is idempotent');
+  assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_verification_decisions')).rows[0].n,1);
+  assert.equal((await db.query("SELECT count(*)::int n FROM round_audit_logs WHERE round_id=$1 AND action='OCR_RESULT_CONFIRMED'",[round])).rows[0].n,1);
+  const announcement=(await readResultAnnouncement(db)).announcement;
+  assert.equal(announcement?.lastDigit,'0');assert.equal(announcement?.roundId,String(round));
+  assert.equal((await readResultAnnouncement(db)).announcement?.confirmedAt,announcement?.confirmedAt,'polling cannot renew the ten-second window');
+  assert.equal((await db.query('SELECT status,result_number,settled_at FROM rounds WHERE id=$1',[round])).rows[0].status,'SCANNING');
+  assert.equal((await db.query('SELECT count(*)::int n FROM member_wallet_ledger')).rows[0].n,0);
+  assert.equal((await db.query('SELECT count(*)::int n FROM round_settlement_awards')).rows[0].n,0);
+  await db.query("UPDATE rounds SET status='REVIEW_REQUIRED' WHERE id=$1",[round]);
+  assert.equal((await readResultAnnouncement(db)).announcement,null,'review-required round cannot announce');
+  await db.query("UPDATE rounds SET status='SCANNING' WHERE id=$1",[round]);
+  await new Promise(resolve=>setTimeout(resolve,10_050));
+  assert.equal((await readResultAnnouncement(db)).announcement,null,'announcement expires ten seconds after the immutable decision time');
   assert.equal((await listCandidateImages(db,randomUUID())).length,0);
   assert.equal(await readCandidateImage(db,storage,randomUUID(),image.id,'full'),null);
   await assert.rejects(deleteCandidateImage(db,storage,randomUUID(),admin,image.id),/candidate_image_not_found/);
   await assert.rejects(deleteCandidateImage(db,storage,oaId,admin,image.id),/candidate_image_still_required/);
   await db.query("UPDATE rounds SET status='CANCELLED' WHERE id=$1",[round]);
+  assert.equal((await readResultAnnouncement(db)).announcement,null,'cancelled round cannot announce');
   const earlyRound=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,closed_at,settlement_oa_id) VALUES(current_date,now()-interval '10 minutes',now()-interval '5 minutes',5,'SCANNING',now()-interval '1 second',$1) RETURNING id",[oaId])).rows[0].id;
   assert.deepEqual(await lockRoundOcrCandidate(db,String(earlyRound),{VDO_NINJA:factory},engine,storage),{status:'WAITING'});
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_one_shot_claims WHERE round_id=$1',[earlyRound])).rows[0].n,0);

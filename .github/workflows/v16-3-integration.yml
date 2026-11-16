@@ -4,6 +4,12 @@ on:
     branches: [feat/pair-live-v16-1-real-camera-ocr]
     paths:
       - '.github/workflows/v16-3-integration.yml'
+      - 'lib/rounds/result-announcement.ts'
+      - 'lib/ocr/automatic-settlement.ts'
+      - 'app/api/admin/ocr-evidence/confirm/route.ts'
+      - 'components/AdminOcrEvidence.tsx'
+      - 'tests/result-announcement*'
+      - 'tests/round-ocr-candidate-db.integration.test.ts'
   workflow_dispatch:
 permissions:
   contents: read
