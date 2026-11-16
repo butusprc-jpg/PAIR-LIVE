@@ -5,6 +5,7 @@ import {chooseLiveFrameSource,type LiveCamera} from '../../../../../lib/ocr/live
 import {VdoLiveFrameSource} from '../../../../../lib/ocr/vdo-live-frame-source';
 import {TesseractOcrAdapter} from '../../../../../lib/ocr/engine';
 import {analyzeOneShotFrame} from '../../../../../lib/ocr/one-shot-scan';
+import {previewGuess} from '../../../../../lib/ocr/preview-guess';
 
 export const runtime='nodejs';
 export const maxDuration=45;
@@ -38,6 +39,8 @@ export async function POST(request:Request){
   const image=`data:image/png;base64,${frame.image.toString('base64')}`;
   const dimensions={imageWidth:frame.width,imageHeight:frame.height};
   if(result.status==='LOCKED')return Response.json({status:'READ',number:result.text,lastDigit:result.lastDigit,parity:result.parity,confidence:result.confidence,rawText:result.reading.rawText,roi:result.roi,image,capturedAt:frame.capturedAt,...dimensions},{headers});
+  const guess=previewGuess(result);
+  if(guess)return Response.json({...guess,rawText:result.rawText??'',image,capturedAt:frame.capturedAt,...dimensions,note:'PREVIEW_ONLY_NO_ROUND_NO_SETTLEMENT'},{headers});
   return Response.json({status:'REVIEW_REQUIRED',reason:result.reason,rawText:result.rawText??'',confidence:result.confidence??0,roi:result.roi??null,image,capturedAt:frame.capturedAt,...dimensions},{headers});
  }catch(error){return Response.json({error:error instanceof Error&&error.message==='early_frame'?'early_frame':'ocr_simulation_unavailable'},{status:503,headers})}
  finally{active.delete(cameraId);await source?.close().catch(()=>{})}
