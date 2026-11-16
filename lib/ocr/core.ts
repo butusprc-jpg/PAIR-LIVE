@@ -3,7 +3,7 @@ export type Parity='EVEN'|'ODD';
 export type SourceType='MOBILE_CAMERA'|'IP_CAMERA'|'NVR_DVR'|'CLOUD_CAMERA';
 export type Frame={id:string;roundId:string;source:SourceType;capturedAt:string;image:Buffer;width:number;height:number;healthy:boolean;sourceFrameIndex?:number};
 export interface FrameSource {type:SourceType; capture(roundId:string):Promise<Frame>}
-export type OcrReading={frame:Frame;rawText:string;normalizedText:string;confidence:number;blurScore:number;glareFraction:number;crop:Buffer};
+export type OcrReading={frame:Frame;rawText:string;normalizedText:string;confidence:number;blurScore:number;glareFraction:number;crop:Buffer;conflict?:boolean;attempts?:{mode:string;text:string;confidence:number}[]};
 export interface OcrAdapter {read(frame:Frame,roi:Roi):Promise<OcrReading>}
 export type Roi={x:number;y:number;width:number;height:number};
 export type OcrConfig={sampleCount:number;minimumConfidence:number;minimumBlurScore:number;maximumGlareFraction:number;maximumFrameAgeMs:number;minimumFrameGapMs:number};
@@ -19,7 +19,7 @@ export function verifyReadings(readings:OcrReading[],now:string,config:OcrConfig
  for(const item of selected){const {frame}=item;const at=Date.parse(frame.capturedAt);if(!frame.healthy)return review('source_offline');if(!Number.isFinite(at)||at> Date.parse(now)+1000||Date.parse(now)-at>config.maximumFrameAgeMs)return review('stale_frame');if(at-previous<config.minimumFrameGapMs)return review('frames_not_fresh');previous=at;
   if(ids.has(frame.id))return review('duplicate_frame');ids.add(frame.id);
   const digest=createHash('sha256').update(frame.image).digest('hex');if(images.has(digest))return review('frozen_image');images.add(digest);
-  if(item.blurScore<config.minimumBlurScore)return review('blurry_image');if(item.glareFraction>config.maximumGlareFraction)return review('glare');if(item.confidence<config.minimumConfidence)return review('low_confidence');
+  if(item.conflict)return review('conflicting_ocr_results');if(item.blurScore<config.minimumBlurScore)return review('blurry_image');if(item.glareFraction>config.maximumGlareFraction)return review('glare');if(item.confidence<config.minimumConfidence)return review('low_confidence');
   let normalized:string;try{normalized=validateScaleDisplay(item.normalizedText)}catch{return review('ambiguous_scale_display')}
   if(expected!==undefined&&normalized!==expected)return review('unstable_display');expected=normalized;
  }

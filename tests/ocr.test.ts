@@ -12,3 +12,23 @@ function samples(){const now=Date.now();return Array.from({length:5},(_,i)=>{con
 test('stable fresh samples verify; OPEN and SETTLED cannot commit',()=>{const result=verifyReadings(samples(),new Date().toISOString());assert.equal(result.status,'VERIFIED');assert.equal(canCommitOcrResult('SCANNING',result),true);assert.equal(canCommitOcrResult('OPEN',result),false);assert.equal(canCommitOcrResult('SETTLED',result),false)});
 for(const [name,mutate] of [['blur',(r:OcrReading[])=>r[0].blurScore=0],['glare',(r:OcrReading[])=>r[0].glareFraction=1],['changed number',(r:OcrReading[])=>r[2].normalizedText='136.21'],['frozen image',(r:OcrReading[])=>r[2].frame.image=r[1].frame.image],['camera offline',(r:OcrReading[])=>r[0].frame.healthy=false],['low confidence',(r:OcrReading[])=>r[0].confidence=10],['stale frame',(r:OcrReading[])=>r[0].frame.capturedAt=new Date(Date.now()-10000).toISOString()]] as const){test(`${name} requires review`,()=>{const r=samples();mutate(r);assert.equal(verifyReadings(r,new Date().toISOString(),defaultOcrConfig).status,'REVIEW_REQUIRED')})}
 for(const [name,metric] of [['blur','blurScore'],['glare','glareFraction']] as const){test(`real transformed ${name} image fails quality threshold`,async()=>{const image=await readFile(join(process.cwd(),'tests/fixtures/scale',`${name}.png`));const frame:Frame={id:name,roundId:'1',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:640,height:240,healthy:true};const result=await new TesseractOcrAdapter().read(frame,{x:0,y:0,width:640,height:240});if(metric==='blurScore')assert.ok(result.blurScore<defaultOcrConfig.minimumBlurScore);else assert.ok(result.glareFraction>defaultOcrConfig.maximumGlareFraction)})}
+
+for(const text of ['5.8756','2.48','0.00'])test(`labeled decimal OCR ${text}`,async()=>{
+ const image=await readFile(join(process.cwd(),'tests/fixtures/scale',`${text}.png`));
+ const frame:Frame={id:text,roundId:'0',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:640,height:240,healthy:true};
+ const reading=await new TesseractOcrAdapter().read(frame,{x:0,y:0,width:640,height:240});
+ assert.equal(reading.normalizedText,text);assert.equal(reading.conflict,false);
+ assert.equal(extractLastDisplayedDigit(reading.normalizedText),text.at(-1));
+});
+test('conflicting credible OCR readings cannot be verified',async()=>{
+ const {selectOcrAttempt}=await import('../lib/ocr/engine');
+ const result=selectOcrAttempt([{mode:'gray7',text:'5.8756',confidence:93},{mode:'binary8',text:'5.8758',confidence:84}]);
+ assert.equal(result.conflict,true);
+});
+test('ROI crop reads only the enclosed number',async()=>{
+ const {execFileSync}=await import('node:child_process');
+ const image=execFileSync('convert',['-size','800x400','xc:white','-fill','black','-font','DejaVu-Sans','-pointsize','100','-gravity','center','-annotate','+0+0','5.8756','png:-']);
+ const frame:Frame={id:'roi',roundId:'0',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:800,height:400,healthy:true};
+ const reading=await new TesseractOcrAdapter().read(frame,{x:100,y:100,width:600,height:200});
+ assert.equal(reading.normalizedText,'5.8756');
+});

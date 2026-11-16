@@ -49,12 +49,10 @@ export async function POST(request:Request){
   const reading=await new TesseractOcrAdapter().read(frame,roiForFrame(saved,frame));
   let number:string;
   try{number=validateScaleDisplay(reading.normalizedText)}
-  catch{return Response.json({status:'UNREADABLE',reason:'ambiguous_display',rawText:reading.rawText,confidence:reading.confidence},{headers})}
-  if(reading.confidence<defaultOcrConfig.minimumConfidence||
-     reading.blurScore<defaultOcrConfig.minimumBlurScore||
-     reading.glareFraction>defaultOcrConfig.maximumGlareFraction)
-   return Response.json({status:'UNREADABLE',reason:'low_image_quality',rawText:reading.rawText,confidence:reading.confidence},{headers});
+  catch{return Response.json({status:'UNREADABLE',reason:'ambiguous_display',rawText:reading.rawText,confidence:reading.confidence,attempts:reading.attempts},{headers})}
   const lastDigit=extractLastDisplayedDigit(number);
+  const reason=reading.conflict?'conflicting_ocr_results':reading.blurScore<defaultOcrConfig.minimumBlurScore?'blurry_image':reading.glareFraction>defaultOcrConfig.maximumGlareFraction?'glare':reading.confidence<defaultOcrConfig.minimumConfidence?'low_confidence':null;
+  if(reason)return Response.json({status:'READ_UNVERIFIED',reason,number,lastDigit,parity:determineParity(lastDigit),rawText:reading.rawText,confidence:reading.confidence,attempts:reading.attempts,note:'PREVIEW_ONLY_NO_ROUND_NO_SETTLEMENT'},{headers});
   return Response.json({status:'READ',number,lastDigit,parity:determineParity(lastDigit),confidence:reading.confidence,at:frame.capturedAt,
    note:'PREVIEW_ONLY_NO_ROUND_NO_SETTLEMENT'},{headers});
  }catch(error){

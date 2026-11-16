@@ -19,11 +19,19 @@ function runBounded(binary:string,args:string[],input:Buffer,outputLimit=MAX_OUT
 const convertBinary=process.platform==='win32'?'magick':'convert';
 async function imageCommand(input:Buffer,args:string[]){return runBounded(convertBinary,['-limit','memory','128MiB','-limit','map','256MiB','-limit','time','5','-',...args,'png:-'],input)}
 async function scalarMetric(image:Buffer,args:string[]){const output=await runBounded(convertBinary,['-limit','memory','128MiB','-limit','map','256MiB','-limit','time','5','-',...args,'-format','%[fx:mean]','info:'],image,1024);const value=Number(output.toString().trim());if(!Number.isFinite(value))throw new Error('image_metrics_failed');return value}
-async function tesseract(image:Buffer){
- const output=await runBounded('tesseract',['stdin','stdout','--psm','7','-l','eng','-c','tessedit_char_whitelist=0123456789.','tsv'],image,256*1024);
+async function tesseract(image:Buffer,psm:number){
+ const output=await runBounded('tesseract',['stdin','stdout','--psm',String(psm),'-l','eng','-c','tessedit_char_whitelist=0123456789.','tsv'],image,256*1024);
  const lines=output.toString().trim().split('\n').slice(1).map(x=>x.split('\t'));
  const words=lines.filter(x=>x.length>=12&&Number(x[10])>=0&&x[11]?.trim());
  return {text:words.map(x=>x[11].trim()).join(' '),confidence:words.length?Math.min(...words.map(x=>Number(x[10]))):0};
+}
+export function selectOcrAttempt(attempts:{mode:string;text:string;confidence:number}[]){
+ const valid=attempts.filter(a=>/^\d+(?:\.\d+)?$/.test(a.text.trim()));
+ const credible=valid.filter(a=>a.confidence>=50);
+ const conflict=new Set(credible.map(a=>a.text.trim())).size>1;
+ const ranked=[...valid].sort((a,b)=>b.confidence-a.confidence||a.mode.localeCompare(b.mode));
+ const winner=ranked[0];
+ return {text:winner?.text.trim()||'',confidence:winner?.confidence||0,conflict,rawText:winner?.text||attempts.find(a=>a.text.trim())?.text||''};
 }
 async function imageMetrics(image:Buffer){const [edgeEnergy,brightFraction]=await Promise.all([scalarMetric(image,['-colorspace','Gray','-morphology','Convolve','Laplacian:0']),scalarMetric(image,['-colorspace','Gray','-threshold','95%'])]);
  // A mostly white sheet is the intended display surface, not a specular highlight.
@@ -36,8 +44,14 @@ export class TesseractOcrAdapter implements OcrAdapter{
   if(!Number.isSafeInteger(frame.width)||!Number.isSafeInteger(frame.height)||frame.width*frame.height>2_000_000||frame.image.length>MAX_INPUT)throw new Error('ocr_frame_too_large');
   if(![roi.x,roi.y,roi.width,roi.height].every(Number.isSafeInteger)||roi.x<0||roi.y<0||roi.width<1||roi.height<1||roi.x+roi.width>frame.width||roi.y+roi.height>frame.height)throw new Error('invalid_roi');
   const crop=await imageCommand(frame.image,['-crop',`${roi.width}x${roi.height}+${roi.x}+${roi.y}`,'+repage']);
-  const gray=await imageCommand(crop,['-colorspace','Gray','-contrast-stretch','1%x1%','-despeckle']);
-  const result=await tesseract(gray),metrics=await imageMetrics(crop);
-  return {frame,rawText:result.text,normalizedText:result.text.trim(),confidence:result.confidence,blurScore:metrics.blurScore,glareFraction:metrics.glareFraction,crop};
+  const scale=Math.max(1,Math.min(4,Math.ceil(80/roi.height)));
+  const enlarged=await imageCommand(crop,['-colorspace','Gray','-resize',`${scale*100}%`,'-contrast-stretch','1%x1%']);
+  const binary=await imageCommand(enlarged,['-threshold','65%']);
+  const attempts=[];
+  for(const [mode,image,psm] of [['gray7',enlarged,7],['gray8',enlarged,8],['gray13',enlarged,13],['binary7',binary,7],['binary8',binary,8]] as const){
+   const result=await tesseract(image,psm);attempts.push({mode,text:result.text,confidence:result.confidence});
+  }
+  const result=selectOcrAttempt(attempts),metrics=await imageMetrics(crop);
+  return {frame,rawText:result.rawText,normalizedText:result.text,confidence:result.confidence,conflict:result.conflict,attempts,blurScore:metrics.blurScore,glareFraction:metrics.glareFraction,crop};
  }
 }
