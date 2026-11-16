@@ -17,6 +17,7 @@ export async function POST(request:Request){
   const storage=configuredCandidateImageStorage();if(!storage)return Response.json({error:'candidate_storage_not_configured'},{status:503,headers});
   const roundId=body.roundId as string,imageId=body.imageId as string,confirmedNumber=body.confirmedNumber as string;
   const result=await timing.measure('ocr_verify',()=>verifyCandidateEvidence(database(),roundId,storage,{adminId:access.value.admin.id,imageId,confirmedNumber}));
+  timing.add('admin_wait',result.adminWaitMs);
   return Response.json({roundId:body.roundId,evidenceId:result.evidenceId,status:'VERIFIED'},{headers:{...headers,'Server-Timing':timing.header()}});
  }catch(error){const code=error instanceof Error?error.message:'';const known=['candidate_not_ready','candidate_oa_invalid','candidate_metadata_invalid','candidate_image_missing','candidate_image_integrity_failed','candidate_evidence_conflict','candidate_confirmation_mismatch','admin_forbidden'];return Response.json({error:known.includes(code)?code:'confirmation_unavailable'},{status:code==='admin_forbidden'?403:known.includes(code)?409:503,headers:{...headers,'Server-Timing':timing.header()}})}
 }

@@ -66,6 +66,8 @@ test('two OCR workers lock one candidate after round close without settlement or
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_verification_decisions')).rows[0].n,0);
   const verifyStart=performance.now();const approved=await Promise.all([verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'}),verifyCandidateEvidence(db,String(round),storage,{adminId:admin,imageId:image.id,confirmedNumber:'5.60'})]);console.log(`synthetic_ocr_stage stage=verify_concurrent duration_ms=${(performance.now()-verifyStart).toFixed(1)}`);
   assert.equal(approved[0].evidenceId,approved[1].evidenceId,'repeated confirmation is idempotent');
+  assert.equal(new Date(approved[0].confirmedAt).getTime(),new Date(approved[1].confirmedAt).getTime(),'retry cannot renew the announcement');
+  assert.ok(approved[0].adminWaitMs>=0,'human review wait is measured separately from verification processing');
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_verification_decisions')).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int n FROM round_audit_logs WHERE round_id=$1 AND action='OCR_RESULT_CONFIRMED'",[round])).rows[0].n,1);
   const announcementStart=performance.now();const announcement=(await readResultAnnouncement(db)).announcement;console.log(`synthetic_ocr_stage stage=announcement_query duration_ms=${(performance.now()-announcementStart).toFixed(1)}`);

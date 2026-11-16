@@ -4,7 +4,7 @@ import {candidateImageKeys,type CandidateImageStorage} from './candidate-image-s
 import {validatePng} from './evidence';
 import {settleVerifiedRound} from '../rounds/settlement';
 
-type Candidate={id:string;round_id:string;oa_id:string;camera_id:string;source_kind:string;source_id:string;frame_id:string;captured_at:Date;full_text:string;last_digit:string;parity:string;confidence:string;original_sha256:string;crop_sha256:string;original_object_key:string;crop_object_key:string;status:string;locked_oa_id:string;locked_camera_id:string;locked_sha256:string;locked_text:string;locked_digit:string;locked_parity:string;locked_confidence:string;first_captured_at:Date;last_captured_at:Date;frame_count:number;locked_at:Date;round_status:string;closed_at:Date;closes_at:Date;settlement_oa_id:string;camera_source_kind:string;current_source_id:string;display_enabled:boolean;line_oa_id:string;oa_enabled:boolean;oa_paused:boolean;oa_expires_at:Date;verified_token_hash:string;configured_by:string|null};
+type Candidate={id:string;round_id:string;oa_id:string;camera_id:string;source_kind:string;source_id:string;frame_id:string;captured_at:Date;created_at:Date;full_text:string;last_digit:string;parity:string;confidence:string;original_sha256:string;crop_sha256:string;original_object_key:string;crop_object_key:string;status:string;locked_oa_id:string;locked_camera_id:string;locked_sha256:string;locked_text:string;locked_digit:string;locked_parity:string;locked_confidence:string;first_captured_at:Date;last_captured_at:Date;frame_count:number;locked_at:Date;round_status:string;closed_at:Date;closes_at:Date;settlement_oa_id:string;camera_source_kind:string;current_source_id:string;display_enabled:boolean;line_oa_id:string;oa_enabled:boolean;oa_paused:boolean;oa_expires_at:Date;verified_token_hash:string;configured_by:string|null};
 
 async function markReview(pool:Pool,roundId:string,reason:string){const client=await pool.connect();try{await client.query('BEGIN');const changed=await client.query("UPDATE rounds SET status='REVIEW_REQUIRED' WHERE id=$1 AND epoch_id=current_round_epoch_id() AND status='SCANNING' RETURNING id",[roundId]);if(changed.rowCount)await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'ocr-worker','OCR_REVIEW_REQUIRED',jsonb_build_object('reason',$2::text))",[roundId,reason]);await client.query('COMMIT')}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}}
 export async function reviewMissingOcrEvidence(pool:Pool,roundId:string,reason:string){if(!/^\d{1,18}$/.test(roundId)||!['candidate_image_missing','candidate_image_integrity_failed','candidate_storage_not_configured'].includes(reason))throw new Error('invalid_ocr_review_reason');await markReview(pool,roundId,reason)}
@@ -44,14 +44,15 @@ export async function verifyCandidateEvidence(pool:Pool,roundId:string,storage:C
   if(existing&&existing.normalized_text!==row.full_text)throw new Error('candidate_evidence_conflict');
   const evidenceId=existing?.id??(await client.query<{id:string}>(`INSERT INTO round_ocr_evidence(round_id,frame_id,source_type,captured_at,raw_ocr_text,normalized_text,confidence,original_sha256,crop_sha256,original_object_key,crop_object_key,candidate_image_id)
    VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,[roundId,row.frame_id,row.source_kind,row.captured_at,row.full_text,row.confidence,originalSha,cropSha,keys.full,keys.crop,row.id])).rows[0].id;
-  const decision=(await client.query<{decision:string;actor:string}>('SELECT decision,actor FROM round_ocr_verification_decisions WHERE evidence_id=$1',[evidenceId])).rows[0];
+  const decision=(await client.query<{decision:string;actor:string;decided_at:Date}>('SELECT decision,actor,decided_at FROM round_ocr_verification_decisions WHERE evidence_id=$1',[evidenceId])).rows[0];
   if(decision&&decision.decision!=='VERIFIED')throw new Error('candidate_evidence_conflict');
   if(decision&&approval&&decision.actor!==approval.adminId)throw new Error('candidate_evidence_conflict');
+  let confirmedAt=decision?.decided_at;
   if(!decision){
-   await client.query("INSERT INTO round_ocr_verification_decisions(evidence_id,decision,actor) VALUES($1,'VERIFIED',$2)",[evidenceId,approval?.adminId??'ocr-worker']);
+   confirmedAt=(await client.query<{decided_at:Date}>("INSERT INTO round_ocr_verification_decisions(evidence_id,decision,actor) VALUES($1,'VERIFIED',$2) RETURNING decided_at",[evidenceId,approval?.adminId??'ocr-worker'])).rows[0].decided_at;
    if(approval)await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'OCR_RESULT_CONFIRMED',jsonb_build_object('evidence_id',$3::bigint,'candidate_image_id',$4::uuid))",[roundId,approval.adminId,evidenceId,row.id]);
   }
-  await client.query('COMMIT');return {candidateImageId:row.id,adminId:row.configured_by,evidenceId};
+  await client.query('COMMIT');return {candidateImageId:row.id,adminId:row.configured_by,evidenceId,confirmedAt,adminWaitMs:new Date(confirmedAt).getTime()-new Date(row.created_at).getTime()};
  }catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}
 }
 
