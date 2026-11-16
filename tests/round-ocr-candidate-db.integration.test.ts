@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
-import {setTimeout as delay} from 'node:timers/promises';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -31,12 +30,15 @@ test('two OCR workers lock one candidate after round close without settlement or
   await db.query('INSERT INTO camera_ocr_roi(camera_id,oa_id,x,y,width,height,updated_by) VALUES($1,$2,0,0,8000,10000,$3)',[camera,oaId,admin]);
   const round=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,closed_at,settlement_oa_id) VALUES(current_date,now()-interval '10 minutes',now()-interval '5 minutes',5,'SCANNING',now()-interval '5 minutes',$1) RETURNING id",[oaId])).rows[0].id;
   let sequence=0;
-  const makeSource=():LiveFrameSource=>({kind:'VDO_NINJA',async open(){},async capture(){await delay(450);const n=++sequence;const image=await sharp(Buffer.from(`<svg width="800" height="240" xmlns="http://www.w3.org/2000/svg"><rect width="800" height="240" fill="white"/><text x="320" y="170" text-anchor="middle" font-family="DejaVu Sans" font-size="120" fill="black">5.60</text><rect x="700" y="${n%100}" width="20" height="20" fill="black"/></svg>`)).png().toBuffer();return {id:`server-${n}`,roundId:'0',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:800,height:240,healthy:true,sourceFrameIndex:n}},async close(){}});
+  const makeSource=():LiveFrameSource=>({kind:'VDO_NINJA',async open(){},async capture(){const n=++sequence;const image=await sharp(Buffer.from(`<svg width="800" height="240" xmlns="http://www.w3.org/2000/svg"><rect width="800" height="240" fill="white"/><text x="320" y="170" text-anchor="middle" font-family="DejaVu Sans" font-size="120" fill="black">5.60</text><rect x="700" y="${n%100}" width="20" height="20" fill="black"/></svg>`)).png().toBuffer();return {id:`server-${n}`,roundId:'0',source:'MOBILE_CAMERA',capturedAt:new Date().toISOString(),image,width:800,height:240,healthy:true,sourceFrameIndex:n}},async close(){}});
   const factory=()=>makeSource(),engine=new TesseractOcrAdapter(),storage=new LocalCandidateImageStorage(imageRoot);
   const [first,second]=await Promise.all([lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage),lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage)]);
-  assert.equal(first.status,'LOCKED');assert.equal(second.status,'LOCKED');
+  assert.equal(first.status,'LOCKED');assert.equal(second.status,'LOCKED');assert.equal(sequence,1,'two workers must capture only one frame');
+  assert.equal((await lockRoundOcrCandidate(db,String(round),{VDO_NINJA:factory},engine,storage)).status,'LOCKED');assert.equal(sequence,1,'replay must not capture again');
   if(first.status==='LOCKED'&&second.status==='LOCKED')assert.deepEqual([first.replayed,second.replayed].sort(),[false,true]);
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_candidate_locks WHERE round_id=$1',[round])).rows[0].n,1);
+  assert.equal((await db.query('SELECT frame_count FROM round_ocr_candidate_locks WHERE round_id=$1',[round])).rows[0].frame_count,1);
+  assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_one_shot_claims WHERE round_id=$1',[round])).rows[0].n,1);
   const image=(await db.query('SELECT id,original_sha256,crop_sha256,original_object_key,crop_object_key FROM round_ocr_candidate_images WHERE round_id=$1',[round])).rows[0];
   assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_candidate_images WHERE round_id=$1',[round])).rows[0].n,1);
   const restarted=new LocalCandidateImageStorage(imageRoot);
@@ -48,6 +50,11 @@ test('two OCR workers lock one candidate after round close without settlement or
   await assert.rejects(deleteCandidateImage(db,storage,randomUUID(),admin,image.id),/candidate_image_not_found/);
   await assert.rejects(deleteCandidateImage(db,storage,oaId,admin,image.id),/candidate_image_still_required/);
   await db.query("UPDATE rounds SET status='CANCELLED' WHERE id=$1",[round]);
+  const earlyRound=(await db.query("INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,closed_at,settlement_oa_id) VALUES(current_date,now()-interval '10 minutes',now()-interval '5 minutes',5,'SCANNING',now()-interval '1 second',$1) RETURNING id",[oaId])).rows[0].id;
+  assert.deepEqual(await lockRoundOcrCandidate(db,String(earlyRound),{VDO_NINJA:factory},engine,storage),{status:'WAITING'});
+  assert.equal((await db.query('SELECT count(*)::int n FROM round_ocr_one_shot_claims WHERE round_id=$1',[earlyRound])).rows[0].n,0);
+  assert.equal(sequence,1);
+  await db.query("UPDATE rounds SET status='CANCELLED' WHERE id=$1",[earlyRound]);
   const failedStorage:CandidateImageStorage={putImmutable:(key,data)=>storage.putImmutable(key,data),get:key=>storage.get(key),remove:async key=>{if(key.endsWith('/crop.png'))throw Error('synthetic_storage_failure');await storage.remove(key)}};
   await assert.rejects(deleteCandidateImage(db,failedStorage,oaId,admin,image.id),/candidate_image_delete_failed/);
   assert.equal((await db.query('SELECT status,deleted_at FROM round_ocr_candidate_images WHERE id=$1',[image.id])).rows[0].status,'DELETING');

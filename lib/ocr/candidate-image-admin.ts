@@ -3,11 +3,11 @@ import type {CandidateImageStorage} from './candidate-image-storage';
 import {validatePng} from './evidence';
 
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-type ImageRow={id:string;round_id:string;oa_id:string;camera_id:string;captured_at:Date;full_text:string;last_digit:string;parity:string;confidence:string;original_sha256:string;crop_sha256:string;original_object_key:string;crop_object_key:string;status:string;created_at:Date};
-function publicImage(row:ImageRow){return {id:row.id,roundId:String(row.round_id),capturedAt:new Date(row.captured_at).toISOString(),number:row.full_text,lastDigit:row.last_digit,parity:row.parity,confidence:Number(row.confidence),status:row.status,originalSha256:row.original_sha256.trim(),cropSha256:row.crop_sha256.trim()}}
+type ImageRow={id:string;round_id:string;oa_id:string;camera_id:string;captured_at:Date;full_text:string;last_digit:string;parity:string;confidence:string;original_sha256:string;crop_sha256:string;original_object_key:string;crop_object_key:string;status:string;created_at:Date;roi?:unknown};
+function publicImage(row:ImageRow){return {id:row.id,roundId:String(row.round_id),capturedAt:new Date(row.captured_at).toISOString(),number:row.full_text,lastDigit:row.last_digit,parity:row.parity,confidence:Number(row.confidence),status:row.status,originalSha256:row.original_sha256.trim(),cropSha256:row.crop_sha256.trim(),roi:row.roi??null}}
 export async function listCandidateImages(pool:Pool,oaId:string,roundId?:string){
  if(!uuid.test(oaId)||roundId!==undefined&&!/^\d{1,18}$/.test(roundId))throw new Error('invalid_evidence_filter');
- const result=await pool.query<ImageRow>(`SELECT * FROM round_ocr_candidate_images WHERE oa_id=$1 AND ($2::bigint IS NULL OR round_id=$2::bigint) ORDER BY round_id DESC,captured_at DESC LIMIT 50`,[oaId,roundId??null]);
+ const result=await pool.query<ImageRow>(`SELECT i.*,a.details->'roi' AS roi FROM round_ocr_candidate_images i LEFT JOIN LATERAL (SELECT details FROM round_audit_logs WHERE round_id=i.round_id AND action='OCR_CANDIDATE_LOCKED' ORDER BY id DESC LIMIT 1) a ON true WHERE i.oa_id=$1 AND ($2::bigint IS NULL OR i.round_id=$2::bigint) ORDER BY i.round_id DESC,i.captured_at DESC LIMIT 50`,[oaId,roundId??null]);
  return result.rows.map(publicImage);
 }
 export async function readCandidateImage(pool:Pool,storage:CandidateImageStorage,oaId:string,id:string,kind:'full'|'crop'){

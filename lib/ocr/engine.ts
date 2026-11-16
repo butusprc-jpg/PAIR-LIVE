@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import type {Frame,OcrAdapter,OcrReading,Roi} from './core';
 
 const MAX_INPUT=5*1024*1024,MAX_OUTPUT=5*1024*1024,PROCESS_TIMEOUT_MS=5000;
-function runBounded(binary:string,args:string[],input:Buffer,outputLimit=MAX_OUTPUT):Promise<Buffer>{
+export function runBounded(binary:string,args:string[],input:Buffer,outputLimit=MAX_OUTPUT):Promise<Buffer>{
  if(input.length>MAX_INPUT)throw new Error('ocr_input_too_large');
  return new Promise((resolve,reject)=>{
   const child=spawn(binary,args,{env:{...process.env,OMP_THREAD_LIMIT:'1'},stdio:['pipe','pipe','pipe']});
@@ -31,6 +31,8 @@ export function selectOcrAttempt(attempts:{mode:string;text:string;confidence:nu
  const conflict=new Set(credible.map(a=>a.text.trim())).size>1;
  const ranked=[...valid].sort((a,b)=>b.confidence-a.confidence||a.mode.localeCompare(b.mode));
  const winner=ranked[0];
+ const ambiguous=attempts.find(a=>a.text.trim()&&!/^\d+(?:\.\d+)?$/.test(a.text.trim()));
+ if(!credible.length&&ambiguous)return {text:ambiguous.text.trim(),confidence:ambiguous.confidence,conflict:true,rawText:ambiguous.text};
  return {text:winner?.text.trim()||'',confidence:winner?.confidence||0,conflict,rawText:winner?.text||attempts.find(a=>a.text.trim())?.text||''};
 }
 async function imageMetrics(image:Buffer){const [edgeEnergy,brightFraction]=await Promise.all([scalarMetric(image,['-colorspace','Gray','-morphology','Convolve','Laplacian:0']),scalarMetric(image,['-colorspace','Gray','-threshold','95%'])]);
