@@ -10,6 +10,8 @@ import {createServer} from 'node:net';
 
 const raw=process.env.MEMBER_PERF_TEST_DATABASE_URL;
 function percentiles(samples:number[]){const sorted=[...samples].sort((a,b)=>a-b);return {p50:sorted[Math.ceil(sorted.length*.50)-1],p95:sorted[Math.ceil(sorted.length*.95)-1],p99:sorted[Math.ceil(sorted.length*.99)-1]}}
+function phaseMs(header:string,name:string){const match=new RegExp(`(?:^|, )${name};dur=([0-9.]+)`).exec(header);return match?Number(match[1]):NaN}
+function logPhases(kind:string,count:number,headers:string[],names:string[]){for(const name of names){const p=percentiles(headers.map(header=>phaseMs(header,name)));console.log(`member_${kind}_phase count=${count} name=${name} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`)}}
 
 test('20 and 100 concurrent synthetic entries preserve wallet and ledger totals',{skip:!raw},async()=>{
  const root=new Pool({connectionString:assertTestTarget(raw)}),schema=`member_perf_${randomUUID().replaceAll('-','')}`;
@@ -43,8 +45,26 @@ test('20 and 100 concurrent synthetic entries preserve wallet and ledger totals'
   const origin=`http://127.0.0.1:${port}`,web=spawn(process.execPath,['node_modules/next/dist/bin/next','start','-p',String(port),'-H','127.0.0.1'],{cwd:process.cwd(),env:{...process.env,DATABASE_URL:url.toString(),CONNECTED_LINE_OA_ID:oa,LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:token},stdio:'ignore'});
   try{
    let ready=false;for(let attempt=0;attempt<150;attempt++){if(web.exitCode!==null)throw Error('perf_web_exited');try{const response=await fetch(`${origin}/api/auth/session`);if(response.status===401){ready=true;break}}catch{}await new Promise(resolve=>setTimeout(resolve,100))}if(!ready)throw Error('perf_web_not_ready');
-   for(const members of batches){const samples=await Promise.all(members.map(async memberId=>{const began=performance.now();const response=await fetch(`${origin}/api/auth/session`,{headers:{Cookie:`pair_member_session=${sessions.get(memberId)}`}});assert.equal(response.status,200);assert.match(response.headers.get('server-timing')??'',/session_query;dur=/);return performance.now()-began}));const p=percentiles(samples);console.log(`member_session_perf count=${members.length} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`)}
-   for(const members of batches){const started=performance.now();const samples=await Promise.all(members.map(async memberId=>{const began=performance.now();const response=await fetch(`${origin}/api/round/entries`,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',Cookie:`pair_member_session=${sessions.get(memberId)}`},body:JSON.stringify({roundId:round.id,side:'even',demoPoints:10,idempotencyKey:randomUUID()})});const duration=performance.now()-began;const timing=response.headers.get('server-timing')??'';assert.equal(response.status,201,`entry response ${response.status}`);assert.match(timing,/auth;dur=/);assert.match(timing,/db_connect;dur=/);assert.match(timing,/round_lock;dur=/);assert.match(timing,/wallet_write;dur=/);return duration}));const p=percentiles(samples);console.log(`member_http_perf count=${members.length} total_ms=${(performance.now()-started).toFixed(1)} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`)}
+   for(const members of batches){
+    const responses=await Promise.all(members.map(async memberId=>{
+     const began=performance.now();const response=await fetch(`${origin}/api/auth/session`,{headers:{Cookie:`pair_member_session=${sessions.get(memberId)}`}});
+     assert.equal(response.status,200);const timing=response.headers.get('server-timing')??'';assert.match(timing,/session_query;dur=/);assert.match(timing,/session_rotate;dur=/);
+     return {duration:performance.now()-began,timing};
+    }));
+    const p=percentiles(responses.map(item=>item.duration));console.log(`member_session_perf count=${members.length} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`);
+    logPhases('session',members.length,responses.map(item=>item.timing),['session_query','session_rotate']);
+   }
+   for(const members of batches){
+    const started=performance.now();
+    const responses=await Promise.all(members.map(async memberId=>{
+     const began=performance.now();const response=await fetch(`${origin}/api/round/entries`,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',Cookie:`pair_member_session=${sessions.get(memberId)}`},body:JSON.stringify({roundId:round.id,side:'even',demoPoints:10,idempotencyKey:randomUUID()})});
+     const duration=performance.now()-began,timing=response.headers.get('server-timing')??'';assert.equal(response.status,201,`entry response ${response.status}`);
+     for(const name of ['auth','oa','db_connect','tx_lock','round_lock','wallet_write','tx_commit','entry'])assert.ok(Number.isFinite(phaseMs(timing,name)),`missing ${name} timing`);
+     return {duration,timing};
+    }));
+    const p=percentiles(responses.map(item=>item.duration));console.log(`member_http_perf count=${members.length} total_ms=${(performance.now()-started).toFixed(1)} p50_ms=${p.p50.toFixed(1)} p95_ms=${p.p95.toFixed(1)} p99_ms=${p.p99.toFixed(1)}`);
+    logPhases('entry',members.length,responses.map(item=>item.timing),['auth','oa','db_connect','tx_lock','round_lock','wallet_write','tx_commit','entry']);
+   }
   }finally{await new Promise<void>(resolve=>{if(web.exitCode!==null||web.signalCode!==null){resolve();return}web.once('exit',()=>resolve());web.kill('SIGTERM')})}
   assert.equal(Number((await db.query('SELECT even_people FROM rounds WHERE id=$1',[round.id])).rows[0].even_people),240);
   const final=await db.connect();try{for(const memberId of batches.flat()){await final.query("SELECT set_config('pair_live.member_id',$1,false)",[memberId]);assert.equal(Number((await final.query<{available_points:string}>('SELECT available_points FROM member_wallets WHERE member_id=$1',[memberId])).rows[0].available_points),980);assert.equal((await final.query<{n:number}>("SELECT count(*)::int AS n FROM member_wallet_ledger WHERE member_id=$1 AND type='DEMO_USE'",[memberId])).rows[0].n,2);assert.equal((await final.query<{n:number}>('SELECT count(*)::int AS n FROM round_entries WHERE round_id=$1 AND member_id=$2',[round.id,memberId])).rows[0].n,2)}}finally{final.release()}
