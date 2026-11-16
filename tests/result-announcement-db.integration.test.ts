@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Pool} from 'pg';
+import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {assertTestTarget} from '../lib/migration-manifest';
 import {readResultAnnouncement} from '../lib/rounds/result-announcement';
@@ -19,7 +20,7 @@ test('member announcement reads only recent settled OCR evidence',{skip:!raw},as
  async function addEvidence(roundId:string,number:string,verified:boolean){
   await client.query(`INSERT INTO round_ocr_evidence(round_id,frame_id,source_type,captured_at,raw_ocr_text,normalized_text,confidence,original_sha256,crop_sha256,original_object_key,crop_object_key,verification_status,verified_at)
    VALUES($1,$2,'VDO_NINJA',clock_timestamp(),$3,$3,95,$4,$4,'synthetic/full.png','synthetic/crop.png',$5,CASE WHEN $5='VERIFIED' THEN clock_timestamp() END)`,
-   [roundId,`synthetic-${roundId}`,number,'a'.repeat(64),verified?'VERIFIED':'PENDING']);
+   [roundId,`synthetic-${randomUUID()}`,number,'a'.repeat(64),verified?'VERIFIED':'PENDING']);
  }
  try{
   await client.query('BEGIN');
