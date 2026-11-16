@@ -8,6 +8,7 @@ import {walletPathFromDatabase} from '../server/wallet-cutover';
 import {enqueueClosingBroadcast} from '../line/round-broadcast';
 import {appliedBusinessSettings,readBusinessSettings,shopStatusAt} from './business-settings';
 import {settlementRateFromAdminFee} from './admin-fee';
+import {startAutomaticCountdown} from './automatic-countdown';
 function asIso(value:unknown){return value instanceof Date?value.toISOString():new Date(String(value)).toISOString()}
 function mapRound(row:Record<string,unknown>):Round{return {id:String(row.id),opensAt:asIso(row.opens_at),closesAt:asIso(row.closes_at),durationMinutes:Number(row.duration_minutes),status:row.status as Round['status'],closedAt:row.closed_at?asIso(row.closed_at):null,settledAt:row.settled_at?asIso(row.settled_at):null,resultNumber:row.result_number?String(row.result_number):null}}
 export type RoundRuleKey='minEntryPoints'|'maxEntryPoints'|'alertBeforeClose';
@@ -46,6 +47,7 @@ async function transition(client:PoolClient){
   const changed=await client.query("UPDATE rounds SET status='SCANNING' WHERE id=$1 AND status='CLOSED' RETURNING *",[row.id]);row=changed.rows[0];
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action) VALUES($1,'engine','AWAITING_SCAN')",[row.id]);
  }
+ if(row.status==='OPEN')row=await startAutomaticCountdown(client,row,new Date(now));
  return {round:await mapRoundWithRules(client,row),serverTime:now};
 }
 export async function currentRound(){return inTransaction(async client=>transition(client))}
@@ -81,7 +83,8 @@ export async function startManualRound(adminId:string){
   const rules=await readRules(client),business=await readBusinessSettings(client);
   const inserted=await client.query(`WITH t AS (SELECT clock_timestamp() AS now) INSERT INTO rounds(round_date,opens_at,closes_at,duration_minutes,status,settlement_oa_id)
    SELECT (t.now AT TIME ZONE 'Asia/Bangkok')::date,t.now,t.now+$1 * interval '1 minute',$1,'OPEN',$2 FROM t RETURNING *`,[duration,oaId]);
-  const round=mapRound(inserted.rows[0]);
+  const started=await startAutomaticCountdown(client,inserted.rows[0],new Date(await dbNow(client)));
+  const round=mapRound(started);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_OPENED',jsonb_build_object('duration_minutes',$3::int,'mode','manual'))",[round.id,adminId,duration]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_RULES_APPLIED',$2::jsonb)",[round.id,JSON.stringify(rules)]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,'engine','ROUND_BUSINESS_SETTINGS_APPLIED',$2::jsonb)",[round.id,JSON.stringify(business)]);
@@ -147,12 +150,12 @@ export async function decideRound(adminId:string,roundId:string,action:'stop'|'c
    return {status:'SCANNING',replayed:false};
   }
   if(round.status==='CANCELLED')return {status:'CANCELLED',replayed:true};
-  if(round.status==='SETTLED')throw new RoundError('round_already_settled',409);
+  if(!['OPEN','CLOSED','SCANNING','REVIEW_REQUIRED'].includes(round.status))throw new RoundError('round_already_settled',409);
   const walletEnabled=(await walletPathFromDatabase(client))==='wallet';
   // round_entries has FORCE RLS scoped to pair_live.member_id. Traverse members
   // under that existing policy; never grant the admin connection unscoped access.
   const members=await client.query('SELECT id FROM members ORDER BY id');
-  let refundedEntries=0;
+  let refundedEntries=0,refundedPoints=0;const refundedMembers=new Set<string>();
   for(const member of members.rows){
    await client.query("SELECT set_config('pair_live.member_id',$1,true)",[member.id]);
    const entries=await client.query("SELECT * FROM round_entries WHERE round_id=$1 AND member_id=$2 AND status='PENDING' ORDER BY id FOR UPDATE",[roundId,member.id]);
@@ -168,15 +171,16 @@ export async function decideRound(adminId:string,roundId:string,action:'stop'|'c
    }
    const changed=await client.query("UPDATE round_entries SET status='CANCELLED' WHERE id=$1 AND member_id=$2 AND status='PENDING' RETURNING id",[entry.id,member.id]);
    if(changed.rowCount!==1)throw new RoundError('refund_state_conflict',409);
-   refundedEntries++;
+   refundedEntries++;refundedPoints+=Number(entry.demo_points);refundedMembers.add(String(entry.member_id));
    }
   }
   await client.query("SELECT set_config('pair_live.member_id','',true)");
   // A missing RLS-visible row must fail closed, so a cancellation cannot strand points.
   if(refundedEntries!==Number(round.even_people)+Number(round.odd_people))throw new RoundError('round_entries_mismatch',409);
-  await client.query("UPDATE rounds SET status='CANCELLED',closed_at=coalesce(closed_at,clock_timestamp()) WHERE id=$1",[roundId]);
+  await client.query("UPDATE rounds SET status='CANCELLED',closed_at=coalesce(closed_at,clock_timestamp()),countdown_stopped_at=CASE WHEN countdown_started_at IS NOT NULL THEN coalesce(countdown_stopped_at,clock_timestamp()) ELSE countdown_stopped_at END WHERE id=$1",[roundId]);
+  await client.query("UPDATE round_countdown_line_outbox SET status='FAILED',attempts=5,last_error='round_cancelled',lease_until=NULL,updated_at=clock_timestamp() WHERE round_id=$1 AND status IN ('PENDING','FAILED','SENDING')",[roundId]);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_CANCELLED',jsonb_build_object('refunded_entries',$3::int))",[roundId,adminId,refundedEntries]);
-  return {status:'CANCELLED',replayed:false,refundedEntries};
+  return {status:'CANCELLED',replayed:false,refundedEntries,refundedMembers:refundedMembers.size,refundedPoints};
  });
 }
 export async function myRoundEntries(memberId:string){return inTransaction(async client=>{await client.query("SELECT set_config('pair_live.member_id',$1,true)",[memberId]);const result=await client.query('SELECT e.id,e.round_id,e.side,e.demo_points,e.status,e.created_at FROM round_entries e JOIN rounds r ON r.id=e.round_id WHERE e.member_id=$1 AND r.epoch_id=current_round_epoch_id() ORDER BY e.created_at DESC LIMIT 100',[memberId]);return result.rows})}

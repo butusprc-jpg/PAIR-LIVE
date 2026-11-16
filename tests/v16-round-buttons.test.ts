@@ -18,7 +18,7 @@ test('ADMIN shows independent LIVE and round start/stop controls wired to protec
  assert.match(controls,/\/api\/admin\/round\/start/);
  assert.match(controls,/\/api\/admin\/round\/decision/);
  assert.match(controls,/act\('start'\)/);
- assert.match(controls,/act\('stop'\)/);
+ assert.doesNotMatch(controls,/act\('stop'\)/);
  assert.match(controls,/act\('cancel'\)/);
  assert.match(controls,/pending=\['OPEN','CLOSED','SCANNING','REVIEW_REQUIRED'\]/);
 });
