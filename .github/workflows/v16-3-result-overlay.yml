@@ -1,0 +1,49 @@
+name: V16.3 member result overlay
+on:
+  push:
+    branches: [feat/pair-live-v16-1-real-camera-ocr]
+    paths:
+      - '.github/workflows/v16-3-result-overlay.yml'
+      - 'app/api/round/result-announcement/**'
+      - 'lib/rounds/result-announcement.ts'
+      - 'modules/external-live/client/MemberLivePlayer.tsx'
+      - 'modules/external-live/client/VdoViewer.tsx'
+      - 'app/globals.css'
+      - 'tests/result-announcement*'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  result-overlay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pair_test
+          POSTGRES_PASSWORD: synthetic_test_password
+          POSTGRES_DB: pair_live_migration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pair_test -d pair_live_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MIGRATION_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      RESULT_ANNOUNCEMENT_TEST_DATABASE_URL: postgresql://pair_test:synthetic_test_password@127.0.0.1:5432/pair_live_migration_test
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify disposable localhost target
+        run: node --import tsx --input-type=module -e "import {assertTestTarget} from './lib/migration-manifest.ts'; assertTestTarget(process.env.RESULT_ANNOUNCEMENT_TEST_DATABASE_URL)"
+      - name: Bootstrap isolated migration baseline
+        run: npm run db:migrate -- --apply
+      - name: Result overlay unit and database tests
+        run: node --import tsx --test tests/result-announcement.test.ts tests/result-announcement-db.integration.test.ts
+      - name: TypeScript
+        run: npx tsc --noEmit

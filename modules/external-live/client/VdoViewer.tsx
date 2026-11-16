@@ -1,4 +1,5 @@
 'use client';
+import * as React from 'react';
 import {useEffect,useRef,useState} from 'react';
 import {initLIFF} from '../../../lib/liff';
 import {isLineWebView} from '../../../lib/topup/qr-navigation';
@@ -6,7 +7,7 @@ import {isLineWebView} from '../../../lib/topup/qr-navigation';
 export function validatedViewerUrl(raw:string){let url:URL;try{url=new URL(raw)}catch{return null}const id=url.searchParams.get('view');return url.origin==='https://vdo.ninja'&&url.pathname==='/'&&url.searchParams.size===1&&!!id&&/^[A-Za-z0-9_-]{7,64}$/.test(id)&&!url.hash?url.toString():null}
 type VideoStatus='CHECKING'|'CONFIRMED'|'UNVERIFIED';
 /** The cross-origin iframe can play video without returning VDO.Ninja stats. Do not display "checking" forever. */
-export default function VdoViewer({url,label,minimal=false}:{url:string;label:string;minimal?:boolean}){
+export default function VdoViewer({url,label,minimal=false,overlayDigit}:{url:string;label:string;minimal?:boolean;overlayDigit?:string|null}){
  const safeUrl=validatedViewerUrl(url),frame=useRef<HTMLIFrameElement>(null),[status,setStatus]=useState<VideoStatus>('CHECKING'),[frameLoaded,setFrameLoaded]=useState(false),[openError,setOpenError]=useState('');
  useEffect(()=>{
   setStatus('CHECKING');setFrameLoaded(false);if(!safeUrl)return;
@@ -50,6 +51,7 @@ export default function VdoViewer({url,label,minimal=false}:{url:string;label:st
  return <><div className="external-live-frame"><iframe ref={frame} src={safeUrl} title={label}
   onLoad={()=>setFrameLoaded(true)} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen
   referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-presentation"/>
+  {overlayDigit&&<div className="live-result-overlay" role="status" aria-label={`เลขท้ายผลรอบ ${overlayDigit}`}>{overlayDigit}</div>}
   {!minimal&&!frameLoaded&&status==='CHECKING'&&<div className="external-live-empty vdo-waiting" role="status">กำลังเปิด Player...</div>}
  </div>{!minimal&&<><p className="muted" role="status">
   {status==='CONFIRMED'?'ONLINE — ตรวจพบเฟรมภาพสด':status==='CHECKING'?'กำลังตรวจภาพ LIVE (ไม่เกิน 12 วินาที)':'Player เปิดอยู่ แต่ยืนยันเฟรมอัตโนมัติไม่ได้ — ตรวจภาพที่จอหรือทดสอบ OCR'}
