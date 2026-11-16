@@ -37,6 +37,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Install OCR tools
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr imagemagick
       - name: Verify disposable localhost target
         run: node --import tsx --input-type=module -e "import {assertTestTarget} from './lib/migration-manifest.ts'; assertTestTarget(process.env.OCR_CANDIDATE_TEST_DATABASE_URL)"
       - name: Bootstrap isolated migration baseline

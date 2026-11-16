@@ -95,5 +95,5 @@ test('two OCR workers lock one candidate after round close without settlement or
   assert.equal((await db.query('SELECT status FROM rounds WHERE id=$1',[failedRound])).rows[0].status,'SCANNING');
   assert.equal((await db.query('SELECT count(*)::int n FROM round_settlement_awards')).rows[0].n,0);
   assert.equal((await db.query('SELECT count(*)::int n FROM round_result_line_outbox')).rows[0].n,0);
- }finally{for(const key of keys){if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key]}await database().end().catch(()=>{});await db?.end();await root.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);if(createdPublicBinding)await root.query('DROP TABLE public.external_live_role_bindings');await root.end();await rm(imageRoot,{recursive:true,force:true})}
+ }finally{await database().end().catch(()=>{});for(const key of keys){if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key]}await db?.end();await root.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);if(createdPublicBinding)await root.query('DROP TABLE public.external_live_role_bindings');await root.end();await rm(imageRoot,{recursive:true,force:true})}
 });
