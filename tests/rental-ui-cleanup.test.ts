@@ -9,6 +9,8 @@ test('rental-facing UI has no orphaned simulation card or demo labels', async ()
  const history = await readFile(new URL('../modules/member-wallet/client/WalletHistory.tsx',import.meta.url),'utf8');
  const reports = await readFile(new URL('../components/AdminReports.tsx',import.meta.url),'utf8');
  assert.doesNotMatch(admin,/AdminPointsSimulation|SIMULATION ONLY/);
+ assert.doesNotMatch(admin,/AdminExternalLive|AdminLivePanel|การเชื่อมต่อกล้องขั้นสูง/);
+ assert.match(admin,/<AdminCameras role=\{role!\}\/>/);
  assert.doesNotMatch(ocr,/AdminPointsSimulation|จำลองหยุดรอบ|SIMULATION ONLY/);
  assert.doesNotMatch(wallet,/แต้ม DEMO|กระเป๋าแต้มสาธิต/);
  assert.doesNotMatch(history,/แต้ม DEMO|รายการแต้มสาธิต/);
