@@ -39,13 +39,15 @@ export async function POST(request:Request){
    FROM site_cameras c LEFT JOIN vdo_ninja_tenants v ON v.oa_id=c.oa_id AND c.slot=1
    WHERE c.camera_id=$1 AND c.oa_id=$2`,[cameraId,tenant.id])).rows[0];
   const camera=await readCamera();
-  if(!camera||!camera.displayEnabled||!tenant.active)return Response.json({error:'live_camera_unavailable'},{status:409,headers});
+  if(!camera||!tenant.active||!camera.streamId)return Response.json({error:'live_camera_unavailable'},{status:409,headers});
   const saved=(await pool.query<NormalizedRoi>(`SELECT x,y,width,height FROM camera_ocr_roi WHERE camera_id=$1 AND oa_id=$2`,[cameraId,tenant.id])).rows[0];
   if(!validNormalizedRoi(saved))return Response.json({error:'ocr_roi_not_saved'},{status:409,headers});
-  source=chooseLiveFrameSource(camera,tenant.id,{VDO_NINJA:()=>new VdoLiveFrameSource()}) as VdoLiveFrameSource;
-  const {frame}=await captureLiveFrame(source,camera,saved);
+  // Admin-only OCR preview is independent from whether the member LIVE display is enabled.
+  const previewCamera={...camera,displayEnabled:true};
+  source=chooseLiveFrameSource(previewCamera,tenant.id,{VDO_NINJA:()=>new VdoLiveFrameSource()}) as VdoLiveFrameSource;
+  const {frame}=await captureLiveFrame(source,previewCamera,saved);
   const latest=await readCamera();
-  if(!latest||latest.streamId!==camera.streamId||latest.revision!==camera.revision||!latest.displayEnabled)throw new Error('camera_changed_during_capture');
+  if(!latest||latest.streamId!==camera.streamId||latest.revision!==camera.revision)throw new Error('camera_changed_during_capture');
   const reading=await new TesseractOcrAdapter().read(frame,roiForFrame(saved,frame));
   let number:string;
   try{number=validateScaleDisplay(reading.normalizedText)}
