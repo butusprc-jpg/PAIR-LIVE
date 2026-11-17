@@ -122,3 +122,7 @@ main:has(.member-transfer){padding-bottom:calc(120px + env(safe-area-inset-botto
 
 .live-result-overlay{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;color:#fff;font-size:clamp(5rem,24vw,12rem);font-weight:900;line-height:1;text-shadow:0 3px 8px #000,0 0 24px #000;-webkit-text-stroke:2px #111;background:rgba(0,0,0,.12);z-index:2}
 @media (max-width:700px){.admin-section-nav{flex-wrap:wrap;overflow:visible}.admin-section-nav button{white-space:normal}}
+
+/* Member header: language selector stays immediately beside the settings gear. */
+.member-header-tools{display:flex;align-items:center;gap:5px;flex-shrink:0}
+@media(max-width:600px){.top .right .member-header-tools{display:flex;align-items:center;gap:4px;max-width:100%}.top .right .member-header-tools .member-language-switch{flex-basis:auto;justify-content:center}.top .right .member-header-tools .member-language-switch button{padding:4px 5px}.bottom button{min-width:0;flex:1}}
