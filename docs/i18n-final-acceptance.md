@@ -7,11 +7,11 @@ All values below come from `locales/*.json`, `lib/line/start-cards.ts`, `lib/lin
 | Start LIVE · LINE `line.live.title` | เริ่มถ่ายทอดสดแล้ว | 直播已开始 | LIVE has started | PASS, per recipient |
 | Start countdown · LINE `line.countdown.title` | เริ่มนับถอยหลังแล้ว | 倒计时已开始 | Countdown has started | PASS, per recipient |
 | One minute before close · OA Broadcast | 🔴 PAIR LIVE เหลือเวลาอีก 1 นาที! ระบบกำลังจะปิดรับการทายผล รีบเข้ามาทายผลก่อนหมดเวลา | NOT SUPPORTED | NOT SUPPORTED | Thai only; one broadcast request has one shared text |
-| Result `5.8756` · LINE `line.result.number` | ผลออกรางวัล: 5.8756 (คู่) | 结果：5.8756（双） | Result: 5.8756 (Even) | PASS, per recipient |
+| Result `5.8756` · LINE `line.result.number` | ผลตัวเลข: 5.8756 (คู่) | 结果：5.8756（双） | Result: 5.8756 (Even) | PASS, per recipient |
 | Entry submitted · Web `member.entrySent` | ส่งรายการแล้ว · สถานะรอผล | 已提交 · 等待结果 | Submitted · Result pending | PASS Web; no separate LINE event |
 | Entry failed · Web `member.error.entryFailed` | ส่งรายการไม่สำเร็จ | 提交失败 | Could not submit entry | PASS Web; LINE NOT SUPPORTED |
 | Add points request · Web `member.topupSuccess` | รับคำขอเลขที่ REQ-125 แล้ว กรุณาส่งภาพสลิปในแชต LINE OA ให้แอดมินตรวจ พร้อมระบุเลขคำขอ | 已收到申请 REQ-125。请在 LINE OA 聊天中发送凭证图片和申请编号供管理员审核 | Request REQ-125 received. Send your receipt image and request number to the admin in LINE OA chat | PASS Web; request card to admin remains Thai |
-| Add points approved · LINE `line.topup.approved` | ✅ เติมจำนวน 100 แต้มที่ต้องการแล้ว | ✅ 已添加 100 积分 | ✅ 100 Points added | PASS, per recipient |
+| Add points approved · LINE `line.topup.approved` | ✅ เติมแต้มสำเร็จ 100 แต้ม | ✅ 已添加 100 积分 | ✅ 100 Points added | PASS, per recipient |
 | Add points rejected · Web `member.topupRejectedStatus` | ปฏิเสธแล้ว | 已拒绝 | Rejected | PASS Web; member LINE notice NOT SUPPORTED |
 | Withdraw request · Web `member.withdrawSuccess` | ส่งคำขอถอนแต้มเลขที่ REQ-125 แล้ว รอแอดมินตรวจและจ่ายแต้ม | 提取申请 REQ-125 已提交，等待管理员审核并发放积分 | Withdrawal request REQ-125 submitted. Wait for admin review and points transfer | PASS Web; admin LINE request card remains Thai |
 | Withdraw approved · LINE `line.withdraw.transferred` | ✅ จ่ายแต้มแล้ว · 100 แต้ม · เลขคำขอ REQ-125 | ✅ 已发放积分 · 100 积分 · 申请编号 REQ-125 | ✅ Points paid · 100 Points · Request REQ-125 | PASS, per recipient |
@@ -37,7 +37,7 @@ All values below come from `locales/*.json`, `lib/line/start-cards.ts`, `lib/lin
 LINE Flex card dry run with `roundId=125`, `resultNumber=5.8756`, `stakePoints=100`, `creditedPoints=190` renders the following exact lines:
 
 ```text
-ไทย: ผลออกรางวัล: 5.8756 (คู่) · แต้มที่ได้รับรวมทุน: 190 แต้ม
+ไทย: ผลตัวเลข: 5.8756 (คู่) · แต้มที่ได้รับรวมทุน: 190 แต้ม
 中文: 结果：5.8756（双） · 获得积分（含本金）：190 积分
 EN: Result: 5.8756 (Even) · Points credited including stake: 190 Points
 ```

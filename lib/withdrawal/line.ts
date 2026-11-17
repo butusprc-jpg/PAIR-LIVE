@@ -1,5 +1,5 @@
 import {recipientLocale} from '../line/locale';
-import {t} from '../i18n';
+import {t,type Locale} from '../i18n';
 import type {Pool,PoolClient} from 'pg';
 import {pushLine,verifiedLineAdmin} from '../topup/line-provider';
 import {decideWithdrawalWithClient} from './store';
@@ -9,30 +9,31 @@ type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:stri
 async function scoped<T>(pool:Pool,fn:(c:PoolClient)=>Promise<T>):Promise<T>{
  const c=await pool.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const v=await fn(c);await c.query('COMMIT');return v}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
-export function withdrawalCard(row:{request_id:string;display_name:string;requested_points:number;payout_details:string}){
- return {type:'flex',altText:`PAIR LIVE · ขอถอน ${row.requested_points} แต้ม`,contents:{
+export function withdrawalCard(row:{request_id:string;display_name:string;requested_points:number;payout_details:string},locale:Locale='th'){
+ const points=row.requested_points.toLocaleString('th-TH');
+ return {type:'flex',altText:t('line.withdraw.card.requestAlt',locale,{points}),contents:{
   type:'bubble',size:'mega',
   body:{type:'box',layout:'vertical',spacing:'md',contents:[
-   {type:'text',text:'PAIR LIVE — คำขอถอนแต้ม',weight:'bold',size:'lg',wrap:true},
-   {type:'text',text:`สมาชิก: ${row.display_name.slice(0,80)}`,wrap:true},
-   {type:'text',text:`ถอน: ${row.requested_points.toLocaleString('th-TH')} แต้ม`,wrap:true},
-   {type:'text',text:`ข้อมูลรับแต้ม: ${row.payout_details}`,wrap:true},
-   {type:'text',text:`เลขคำขอ: ${row.request_id}`,size:'xs',wrap:true},
-   {type:'text',text:'ตรวจข้อมูลและจ่ายแต้มให้สมาชิกก่อนกดยืนยัน',size:'sm',wrap:true}
+   {type:'text',text:`PAIR LIVE — ${t('line.withdraw.card.requestTitle',locale)}`,weight:'bold',size:'lg',wrap:true},
+   {type:'text',text:t('line.withdraw.card.member',locale,{name:row.display_name.slice(0,80)}),wrap:true},
+   {type:'text',text:t('line.withdraw.card.points',locale,{points}),wrap:true},
+   {type:'text',text:t('line.withdraw.card.details',locale,{details:row.payout_details}),wrap:true},
+   {type:'text',text:t('line.withdraw.card.requestId',locale,{reference:row.request_id}),size:'xs',wrap:true},
+   {type:'text',text:t('line.withdraw.card.reviewNote',locale),size:'sm',wrap:true}
   ]},
   footer:{type:'box',layout:'vertical',spacing:'sm',contents:[
-   {type:'button',style:'primary',color:'#1763DC',action:{type:'postback',label:'ยืนยันโอนแล้ว',data:`withdraw:v1:transfer:${row.request_id}`}},
-   {type:'button',style:'secondary',action:{type:'postback',label:'❌ ปฏิเสธ',data:`withdraw:v1:reject:${row.request_id}`}}
+   {type:'button',style:'primary',color:'#1763DC',action:{type:'postback',label:t('line.withdraw.card.transferButton',locale),data:`withdraw:v1:transfer:${row.request_id}`}},
+   {type:'button',style:'secondary',action:{type:'postback',label:t('line.withdraw.card.rejectButton',locale),data:`withdraw:v1:reject:${row.request_id}`}}
   ]}
  }};
 }
-export function withdrawalStatusCard(row:{request_id:string;requested_points:number;status:'TRANSFERRED'|'REJECTED'}){
- const label=row.status==='TRANSFERRED'?'โอนเรียบร้อยแล้ว':'ปฏิเสธแล้ว';
- return {type:'flex',altText:`PAIR LIVE · ถอนแต้ม${label}`,contents:{type:'bubble',size:'mega',body:{type:'box',layout:'vertical',spacing:'md',contents:[
+export function withdrawalStatusCard(row:{request_id:string;requested_points:number;status:'TRANSFERRED'|'REJECTED'},locale:Locale='th'){
+ const label=t(row.status==='TRANSFERRED'?'line.withdraw.card.transferred':'line.withdraw.card.rejected',locale);
+ return {type:'flex',altText:t('line.withdraw.card.statusAlt',locale,{status:label}),contents:{type:'bubble',size:'mega',body:{type:'box',layout:'vertical',spacing:'md',contents:[
   {type:'text',text:`PAIR LIVE — ${label}`,weight:'bold',size:'lg',wrap:true},
-  {type:'text',text:`ถอน: ${row.requested_points.toLocaleString('th-TH')} แต้ม`,wrap:true},
-  {type:'text',text:`เลขคำขอ: ${row.request_id}`,size:'xs',wrap:true},
-  {type:'text',text:`สถานะ: ${label}`,wrap:true}
+  {type:'text',text:t('line.withdraw.card.points',locale,{points:row.requested_points.toLocaleString('th-TH')}),wrap:true},
+  {type:'text',text:t('line.withdraw.card.requestId',locale,{reference:row.request_id}),size:'xs',wrap:true},
+  {type:'text',text:t('line.withdraw.card.status',locale,{status:label}),wrap:true}
  ]}}};
 }
 export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch}={}){

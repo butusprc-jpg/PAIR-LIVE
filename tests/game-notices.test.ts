@@ -6,7 +6,7 @@ test('winner notice shows full scale and confirmed total credit',()=>{
  const notice={roundId:'125',resultNumber:'2.48',chosenSide:'even' as const,stakePoints:100,outcome:'CORRECT' as const,creditedPoints:190};
  assert.equal(resultParity('2.48'),'even');
  const text=resultNoticeText(notice);
- assert.match(text,/ผลออกรางวัล: 2.48 \(คู่\)/);
+ assert.match(text,/ผลตัวเลข: 2.48 \(คู่\)/);
  assert.match(text,/จำนวนที่ทาย: 100 แต้ม/);
  assert.match(text,/รวมยอดทั้งหมด: 190 แต้ม/);
  assert.match(text,/PAIR LIVE — ผลการทาย/);assert.match(text,/ยินดีด้วย! คุณทายถูก/);assert.match(text,/แต้มที่ได้รับรวมทุน: 190 แต้ม/);
