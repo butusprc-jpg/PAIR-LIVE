@@ -1,9 +1,11 @@
+import {recipientLocale} from '../line/locale';
+import {t} from '../i18n';
 import type {Pool,PoolClient} from 'pg';
 import {pushLine,verifiedLineAdmin} from '../topup/line-provider';
 import {decideWithdrawalWithClient} from './store';
 import {TopupError} from '../topup/store';
 
-type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:string;attempts:number;requested_points:number;payout_details:string;display_name:string;status:string;debit_timing:string};
+type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:string;attempts:number;requested_points:number;payout_details:string;display_name:string;status:string;debit_timing:string;notification_locale:string};
 async function scoped<T>(pool:Pool,fn:(c:PoolClient)=>Promise<T>):Promise<T>{
  const c=await pool.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const v=await fn(c);await c.query('COMMIT');return v}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
@@ -51,7 +53,8 @@ export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch
     (SELECT payout_details FROM member_withdrawal_requests WHERE id=o.request_id) AS payout_details,
     (SELECT m.display_name FROM member_withdrawal_requests r JOIN members m ON m.id=r.member_id WHERE r.id=o.request_id) AS display_name,
     (SELECT status FROM member_withdrawal_requests WHERE id=o.request_id) AS status,
-    (SELECT debit_timing FROM member_withdrawal_requests WHERE id=o.request_id) AS debit_timing
+    (SELECT debit_timing FROM member_withdrawal_requests WHERE id=o.request_id) AS debit_timing,
+    (SELECT m.notification_locale FROM member_withdrawal_requests r JOIN members m ON m.id=r.member_id WHERE r.id=o.request_id) AS notification_locale
  `)).rows);
  let sent=0,retry=0,failed=0;
  for(const row of rows){
@@ -59,9 +62,9 @@ export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch
   const message=row.purpose==='ADMIN_REQUEST'?
    (row.status==='PENDING'?withdrawalCard(row):{type:'text',text:`คำขอถอน ${row.requested_points} แต้ม · สถานะล่าสุด ${row.status}`})
    :{type:'text',text:row.purpose==='MEMBER_TRANSFERRED'?
-    `✅ จ่ายแต้มแล้ว · ${row.requested_points} แต้ม · เลขคำขอ ${row.request_id}`:
-    row.debit_timing==='PREDEBIT'?`❌ คำขอถอนแต้มถูกปฏิเสธ คืน ${row.requested_points} แต้มแล้ว · เลขคำขอ ${row.request_id}`:
-    `❌ คำขอถอน ${row.requested_points} แต้มถูกปฏิเสธ ยอดแต้มไม่เปลี่ยน · เลขคำขอ ${row.request_id}`};
+    t('line.withdraw.transferred',recipientLocale(row.notification_locale),{points:row.requested_points,reference:row.request_id}):
+    row.debit_timing==='PREDEBIT'?t('line.withdraw.rejectedRefund',recipientLocale(row.notification_locale),{points:row.requested_points,reference:row.request_id}):
+    t('line.withdraw.rejected',recipientLocale(row.notification_locale),{points:row.requested_points,reference:row.request_id})};
   try{await pushLine(row.recipient_user_id,[message],row.id,opts.fetch)}
   catch(e){const code=e instanceof Error&&'status' in e?Number((e as {status:number}).status):503;status=(code===503||code===429||code>=500)&&row.attempts<5?'RETRY':'FAILED';error='line_delivery_failed'}
   await scoped(pool,c=>c.query("UPDATE member_withdrawal_line_outbox SET status=$2,lease_until=NULL,next_attempt_at=now()+($3::integer*interval '1 second'),last_error=$4,sent_at=CASE WHEN $2='SENT' THEN now() ELSE sent_at END WHERE id=$1 AND status='PROCESSING' AND attempts=$5",[row.id,status,Math.min(3600,30*2**(row.attempts-1)),error,row.attempts]));

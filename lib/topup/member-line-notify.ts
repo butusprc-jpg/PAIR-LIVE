@@ -1,9 +1,11 @@
+import {recipientLocale} from '../line/locale';
+import {t} from '../i18n';
 import type {Pool,PoolClient} from 'pg';
 import {pushLine} from './line-provider';
 import {lineAdminRecipients} from './line-notify';
 import {TopupError} from './store';
 
-type QueueRow={request_id:string;recipient_user_id:string;approved_points:number;attempts:number};
+type QueueRow={request_id:string;recipient_user_id:string;approved_points:number;attempts:number;notification_locale:string};
 async function scoped<T>(pool:Pool,run:(client:PoolClient)=>Promise<T>):Promise<T>{
  const c=await pool.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const v=await run(c);await c.query('COMMIT');return v}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
@@ -47,12 +49,13 @@ export async function dispatchApprovedMemberLine(pool:Pool,opts:{fetch?:typeof f
   ) UPDATE member_topup_member_notifications n SET status='PROCESSING',attempts=n.attempts+1,
     lease_until=now()+interval '40 seconds',updated_at=now()
     FROM candidate WHERE n.request_id=candidate.request_id
-    RETURNING n.request_id,n.recipient_user_id,n.approved_points,n.attempts`)).rows;
+    RETURNING n.request_id,n.recipient_user_id,n.approved_points,n.attempts,
+    (SELECT m.notification_locale FROM member_topup_requests r JOIN members m ON m.id=r.member_id WHERE r.id=n.request_id) AS notification_locale`)).rows;
  });
  let sent=0,retry=0,failed=0;
  for(const row of rows){
   let status:'SENT'|'RETRY'|'FAILED'='SENT';let code:string|null=null;
-  try{await pushLine(row.recipient_user_id,[{type:'text',text:`✅ เติมจำนวน ${row.approved_points} แต้มที่ต้องการแล้ว`}],row.request_id,opts.fetch,token)}
+  try{await pushLine(row.recipient_user_id,[{type:'text',text:t('line.topup.approved',recipientLocale(row.notification_locale),{points:row.approved_points})}],row.request_id,opts.fetch,token)}
   catch(e){const http=e instanceof Error&&'status' in e?Number((e as {status:number}).status):503;
    const temporary=http===503||http===429||http>=500;
    status=temporary&&row.attempts<5?'RETRY':'FAILED';code=temporary?'line_temporary':'line_rejected';
