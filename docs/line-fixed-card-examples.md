@@ -10,9 +10,9 @@ Generated from the actual card functions with synthetic inputs: round 125, resul
 | Countdown | th | PAIR LIVE · เริ่มนับถอยหลังแล้ว | PAIR LIVE<br>เริ่มนับถอยหลังแล้ว<br>รอบที่: 125<br>เวลานับถอยหลัง: 60 วินาที<br>เข้าสู่หน้า PLAY |
 | Countdown | zh-CN | PAIR LIVE · 倒计时已开始 | PAIR LIVE<br>倒计时已开始<br>轮次：125<br>倒计时：60 秒<br>进入游戏页面 |
 | Countdown | en | PAIR LIVE · Countdown has started | PAIR LIVE<br>Countdown has started<br>Round: 125<br>Countdown: 60 seconds<br>Open PLAY |
-| Result correct | th | PAIR LIVE ทายถูก รอบ 125 | PAIR LIVE — ผลการทาย<br>ยินดีด้วย! คุณทายถูก<br>รอบที่ 125<br>ผลตัวเลข: 5.8756 (คู่)<br>คุณทาย: คู่<br>จำนวนที่ทาย: 100 แต้ม<br>แต้มที่ได้รับรวมทุน: 190 แต้ม<br>รวมยอดทั้งหมด: 190 แต้ม<br>สถานะ: ทายถูก ✅ |
-| Result correct | zh-CN | PAIR LIVE 猜中 第 125 轮 | PAIR LIVE — 竞猜结果<br>恭喜！您猜对了<br>轮次 125<br>结果：5.8756（双）<br>您选择：双<br>投注：100 积分<br>获得积分（含本金）：190 积分<br>合计：190 积分<br>状态：猜中 ✅ |
-| Result correct | en | PAIR LIVE correct, round 125 | PAIR LIVE — Result<br>Congratulations! You won<br>Round 125<br>Result: 5.8756 (Even)<br>You chose: Even<br>Stake: 100 Points<br>Points credited including stake: 190 Points<br>Total: 190 Points<br>Status: Correct ✅ |
+| Result correct | th | PAIR LIVE ทายถูก รอบ 125 | PAIR LIVE — ผลการทาย<br>ยินดีด้วย! คุณทายถูก<br>รอบที่ 125<br>ผลตัวเลข: 5.8756 (คู่)<br>คุณทาย: คู่<br>จำนวนที่ทาย: 100 แต้ม<br>แต้มที่ได้รับรวมทุน: 190 แต้ม<br>รวมแต้มที่ได้รับจากรอบนี้: 190 แต้ม<br>สถานะ: ทายถูก ✅ |
+| Result correct | zh-CN | PAIR LIVE 猜中 第 125 轮 | PAIR LIVE — 竞猜结果<br>恭喜！您猜对了<br>轮次 125<br>结果：5.8756（双）<br>您选择：双<br>投注：100 积分<br>获得积分（含本金）：190 积分<br>本轮获得积分合计：190 积分<br>状态：猜中 ✅ |
+| Result correct | en | PAIR LIVE correct, round 125 | PAIR LIVE — Result<br>Congratulations! You won<br>Round 125<br>Result: 5.8756 (Even)<br>You chose: Even<br>Stake: 100 Points<br>Points credited including stake: 190 Points<br>Total credited this round: 190 Points<br>Status: Correct ✅ |
 | Result incorrect | th | PAIR LIVE ทายผิด รอบ 125 | PAIR LIVE — ผลการทาย<br>ผลการทาย: ทายผิด<br>รอบที่ 125<br>ผลตัวเลข: 5.8757 (คี่)<br>คุณทาย: คู่<br>จำนวนที่ทาย: 100 แต้ม<br>แต้มที่ได้รับ: 0 แต้ม<br>สถานะ: ทายผิด ❌ |
 | Result incorrect | zh-CN | PAIR LIVE 未猜中 第 125 轮 | PAIR LIVE — 竞猜结果<br>竞猜结果：未猜中<br>轮次 125<br>结果：5.8757（单）<br>您选择：双<br>投注：100 积分<br>获得积分：0 积分<br>状态：未猜中 ❌ |
 | Result incorrect | en | PAIR LIVE incorrect, round 125 | PAIR LIVE — Result<br>Result: Incorrect<br>Round 125<br>Result: 5.8757 (Odd)<br>You chose: Even<br>Stake: 100 Points<br>Points credited: 0 Points<br>Status: Incorrect ❌ |

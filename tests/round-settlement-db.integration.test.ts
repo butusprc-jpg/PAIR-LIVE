@@ -66,7 +66,7 @@ test('verified settlement credits once with wallet ledger and rejects unready ro
   assert.equal(delivered.filter(x=>x?.status==='SENT').length,1);assert.equal(delivered.filter(x=>x?.status==='FAILED').length,1);
   await db.query("UPDATE round_result_line_outbox SET next_attempt_at=now()-interval '1 second' WHERE status='FAILED'");
   assert.equal((await dispatchRoundResultLine(db,fetcher))?.status,'SENT');
-  assert.equal(pushes.length,4);for(const to of new Set(pushes.map(x=>x.to)))assert.equal(new Set(pushes.filter(x=>x.to===to).map(x=>x.key)).size,1);
+  assert.equal(pushes.length,4);for(const to of new Set(pushes.map(x=>x.to))){assert.equal(new Set(pushes.filter(x=>x.to===to).map(x=>x.key)).size,1);assert.equal(new Set(pushes.filter(x=>x.to===to).map(x=>x.body)).size,1)}
   assert.equal(new Set(pushes.map(x=>x.to)).size,2);assert.ok(pushes.some(x=>x.to==='U'+String(1).repeat(32)&&x.body.includes('190 积分')&&x.body.includes('猜中')));assert.ok(pushes.some(x=>x.to==='U'+String(2).repeat(32)&&x.body.includes('0 Points')&&x.body.includes('Incorrect')));assert.ok(pushes.every(x=>!x.body.includes('{points}')&&!x.body.includes('{round}')));
   assert.equal(await balance(members[0]),1090);assert.equal(await balance(members[1]),900);assert.equal(await balance(members[2]),950);
   assert.equal(await dispatchRoundResultLine(db,fetcher),null);

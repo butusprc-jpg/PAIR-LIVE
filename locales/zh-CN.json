@@ -726,7 +726,7 @@
   "line.result.stake": "投注：{points} 积分",
   "line.result.credit": "获得积分（含本金）：{points} 积分",
   "line.result.zero": "获得积分：0 积分",
-  "line.result.total": "合计：{points} 积分",
+  "line.result.total": "本轮获得积分合计：{points} 积分",
   "line.result.status": "状态：{status}",
   "line.result.winStatus": "猜中 ✅",
   "line.result.loseStatus": "未猜中 ❌",

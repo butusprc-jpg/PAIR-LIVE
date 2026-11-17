@@ -8,7 +8,7 @@ test('winner notice shows full scale and confirmed total credit',()=>{
  const text=resultNoticeText(notice);
  assert.match(text,/ผลตัวเลข: 2.48 \(คู่\)/);
  assert.match(text,/จำนวนที่ทาย: 100 แต้ม/);
- assert.match(text,/รวมยอดทั้งหมด: 190 แต้ม/);
+ assert.match(text,/รวมแต้มที่ได้รับจากรอบนี้: 190 แต้ม/);
  assert.match(text,/PAIR LIVE — ผลการทาย/);assert.match(text,/ยินดีด้วย! คุณทายถูก/);assert.match(text,/แต้มที่ได้รับรวมทุน: 190 แต้ม/);
  assert.equal(resultNoticeCard(notice).type,'flex');
 });
@@ -16,7 +16,7 @@ test('losing member never sees a payout amount',()=>{
  const text=resultNoticeText({roundId:'125',resultNumber:'2.48',chosenSide:'odd',stakePoints:100,outcome:'INCORRECT'});
  assert.match(text,/ทายผิด ❌/);
  assert.match(text,/แต้มที่ได้รับ: 0 แต้ม/);
- assert.doesNotMatch(text,/รวมยอดทั้งหมด/);
+ assert.doesNotMatch(text,/รวมแต้มที่ได้รับจากรอบนี้/);
  assert.equal(resultParity('3.27'),'odd');assert.equal(resultParity('4.60'),'even');
 });
 test('rejects false win and payout that has not been committed',()=>{

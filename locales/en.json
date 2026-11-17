@@ -726,7 +726,7 @@
   "line.result.stake": "Stake: {points} Points",
   "line.result.credit": "Points credited including stake: {points} Points",
   "line.result.zero": "Points credited: 0 Points",
-  "line.result.total": "Total: {points} Points",
+  "line.result.total": "Total credited this round: {points} Points",
   "line.result.status": "Status: {status}",
   "line.result.winStatus": "Correct ✅",
   "line.result.loseStatus": "Incorrect ❌",

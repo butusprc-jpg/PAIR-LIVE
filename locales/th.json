@@ -726,7 +726,7 @@
   "line.result.stake": "จำนวนที่ทาย: {points} แต้ม",
   "line.result.credit": "แต้มที่ได้รับรวมทุน: {points} แต้ม",
   "line.result.zero": "แต้มที่ได้รับ: 0 แต้ม",
-  "line.result.total": "รวมยอดทั้งหมด: {points} แต้ม",
+  "line.result.total": "รวมแต้มที่ได้รับจากรอบนี้: {points} แต้ม",
   "line.result.status": "สถานะ: {status}",
   "line.result.winStatus": "ทายถูก ✅",
   "line.result.loseStatus": "ทายผิด ❌",

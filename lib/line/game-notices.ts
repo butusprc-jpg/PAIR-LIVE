@@ -17,6 +17,7 @@ export function resultParity(resultNumber:string):'even'|'odd'{
 function points(value:number){if(!Number.isSafeInteger(value)||value<0)throw new Error('invalid_points');return value.toLocaleString('th-TH')}
 export function resultNoticeText(notice:ResultNotice,locale:Locale='th'){
   if(!/^\d+$/.test(notice.roundId)||!Number.isSafeInteger(notice.stakePoints)||notice.stakePoints<1)throw new Error('invalid_result_notice');
+  if(!['even','odd'].includes(notice.chosenSide)||!['CORRECT','INCORRECT'].includes(notice.outcome))throw new Error('invalid_result_notice');
   const actual=resultParity(notice.resultNumber);
   if((actual===notice.chosenSide)!==(notice.outcome==='CORRECT'))throw new Error('result_outcome_mismatch');
   if(notice.outcome==='CORRECT'&&(notice.creditedPoints===undefined||notice.creditedPoints<1))throw new Error('unconfirmed_payout');

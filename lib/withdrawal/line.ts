@@ -3,13 +3,14 @@ import {t,type Locale} from '../i18n';
 import type {Pool,PoolClient} from 'pg';
 import {pushLine,verifiedLineAdmin} from '../topup/line-provider';
 import {decideWithdrawalWithClient} from './store';
-import {TopupError} from '../topup/store';
+import {TopupError,uuid} from '../topup/store';
 
 type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:string;attempts:number;requested_points:number;payout_details:string;display_name:string;status:string;debit_timing:string;notification_locale:string};
 async function scoped<T>(pool:Pool,fn:(c:PoolClient)=>Promise<T>):Promise<T>{
  const c=await pool.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const v=await fn(c);await c.query('COMMIT');return v}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
 export function withdrawalCard(row:{request_id:string;display_name:string;requested_points:number;payout_details:string},locale:Locale='th'){
+ if(!uuid(row.request_id)||!Number.isSafeInteger(row.requested_points)||row.requested_points<1||typeof row.display_name!=='string'||typeof row.payout_details!=='string')throw new TopupError('invalid_withdrawal_card_input');
  const points=row.requested_points.toLocaleString('th-TH');
  return {type:'flex',altText:t('line.withdraw.card.requestAlt',locale,{points}),contents:{
   type:'bubble',size:'mega',
@@ -28,6 +29,8 @@ export function withdrawalCard(row:{request_id:string;display_name:string;reques
  }};
 }
 export function withdrawalStatusCard(row:{request_id:string;requested_points:number;status:'TRANSFERRED'|'REJECTED'},locale:Locale='th'){
+ if(!uuid(row.request_id)||!Number.isSafeInteger(row.requested_points)||row.requested_points<1)throw new TopupError('invalid_withdrawal_card_input');
+ if(row.status!=='TRANSFERRED'&&row.status!=='REJECTED')throw new TopupError('invalid_withdrawal_card_status');
  const label=t(row.status==='TRANSFERRED'?'line.withdraw.card.transferred':'line.withdraw.card.rejected',locale);
  return {type:'flex',altText:t('line.withdraw.card.statusAlt',locale,{status:label}),contents:{type:'bubble',size:'mega',body:{type:'box',layout:'vertical',spacing:'md',contents:[
   {type:'text',text:`PAIR LIVE — ${label}`,weight:'bold',size:'lg',wrap:true},

@@ -82,7 +82,7 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
     });
    }
    assert.equal((await webhook('new-approved',row.id,'transfer',cardData)).status,200);assert.equal(await balance(),500);
-   assert.match(JSON.stringify(delivery.at(-1)?.message),/โอนเรียบร้อยแล้ว/);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/จ่ายแต้มเรียบร้อยแล้ว/);
    assert.equal('footer' in (delivery.at(-1)?.message as {contents:{footer?:unknown}}).contents,false);
    assert.equal((await webhook('new-approved',row.id)).status,200);
    assert.equal((await webhook('new-approved-other-event',row.id)).status,200);assert.equal(await balance(),500);
@@ -92,7 +92,7 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    const reject=await createWithdrawal(db,member,50,'account 22',randomUUID(),recipients);
    assert.equal(await balance(),500);
    assert.equal((await processWithdrawalPostback(db,{webhookEventId:'new-rejected',userId:adminLine,data:`withdraw:v1:reject:${reject.id}`},{allowlist,fetch:fakeFetch})).result,'REJECTED');assert.equal(await balance(),500);
-   assert.match(JSON.stringify(delivery.at(-1)?.message),/ปฏิเสธแล้ว/);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/ปฏิเสธคำขอแล้ว/);
    assert.equal('footer' in (delivery.at(-1)?.message as {contents:{footer?:unknown}}).contents,false);
    assert.equal((await decideWithdrawal(db,admin,reject.id,'REJECTED')).replayed,true);
    const tooLarge=await createWithdrawal(db,member,450,'account 33',randomUUID(),recipients);
@@ -106,7 +106,7 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    assert.equal((await processWithdrawalPostback(db,{webhookEventId:'old-approved',userId:adminLine,data:`withdraw:v1:transfer:${old100}`},{allowlist,fetch:fakeFetch})).result,'TRANSFERRED');assert.equal(await balance(),400);
    assert.equal((await decideWithdrawal(db,admin,old100,'TRANSFERRED')).replayed,true);assert.equal(await balance(),400);
    assert.equal((await processWithdrawalPostback(db,{webhookEventId:'old-rejected',userId:adminLine,data:`withdraw:v1:reject:${old300}`},{allowlist,fetch:fakeFetch})).result,'REJECTED');assert.equal(await balance(),700);
-   assert.match(JSON.stringify(delivery.at(-1)?.message),/ปฏิเสธแล้ว/);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/ปฏิเสธคำขอแล้ว/);
    assert.equal((await decideWithdrawal(db,admin,old300,'REJECTED')).replayed,true);assert.equal(await balance(),700);
    const rollback=await createWithdrawal(db,member,60,'rollback fixture',randomUUID(),recipients);
    await db.query("CREATE FUNCTION fail_withdrawal_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic_audit_failure'; END $$");
@@ -128,7 +128,7 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    assert.equal(recovered.result,'TRANSFERRED');assert.equal(await balance(),640);
    assert.equal((await db.query("SELECT processing_status FROM line_webhook_events WHERE event_id='atomic-failure'")).rows[0].processing_status,'PROCESSED');
    assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_postbacks WHERE request_id=$1',[rollback.id])).rows[0].n,1);
-   assert.match(JSON.stringify(delivery.at(-1)?.message),/โอนเรียบร้อยแล้ว/);
+   assert.match(JSON.stringify(delivery.at(-1)?.message),/จ่ายแต้มเรียบร้อยแล้ว/);
    const forbidden=await processWithdrawalPostback(db,{webhookEventId:'unauthorized',userId:'U'+'c'.repeat(32),data:`withdraw:v1:transfer:${rollback.id}`},{allowlist,fetch:fakeFetch});
    assert.equal(forbidden.result,'FORBIDDEN');assert.equal(await balance(),640);
    const concurrent=await createWithdrawal(db,member,25,'concurrent fixture',randomUUID(),recipients);

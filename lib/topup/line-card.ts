@@ -39,10 +39,12 @@ export function parsePostback(data:string,actor:string,now=Date.now()):{stage:'R
 export type CardRow={id:string;displayName:string;points:number;createdAt:Date|string;status:string};
 function label(text:string,value:string){return {type:'box',layout:'baseline',contents:[{type:'text',text,size:'sm',color:'#737B8C',flex:3},{type:'text',text:value,size:'sm',color:'#18223A',flex:7,wrap:true}]}}
 function card(row:CardRow,title:string,bodyExtra:unknown[]=[],footer:unknown[]=[],hero?:string,locale:Locale='th'){
+ if(!uuid(row.id)||!Number.isSafeInteger(row.points)||row.points<1||typeof row.displayName!=='string')throw new TopupError('invalid_line_card_input');
  const name=row.displayName.replace(/[\r\n\t]/g,' ').slice(0,80)||t('line.topup.card.unknownName',locale);
  const when=formatDate(row.createdAt,locale,{dateStyle:'medium',timeStyle:'short'});
  const points=row.points.toLocaleString('th-TH');
  const localizedStatus:Record<string,string>={PENDING:'line.topup.card.pending',APPROVED:'line.topup.card.approvedStatus',REJECTED:'line.topup.card.rejectedStatus','รอตรวจสอบ':'line.topup.card.pending','อนุมัติแล้ว':'line.topup.card.approvedStatus','ปฏิเสธแล้ว':'line.topup.card.rejectedStatus'};
+ if(!Object.hasOwn(localizedStatus,row.status))throw new TopupError('invalid_line_card_status');
  return {type:'flex',altText:`PAIR LIVE · ${title} · ${name} · ${t('line.topup.card.pointsValue',locale,{points})}`,contents:{type:'bubble',size:'mega',
   ...(hero?{hero:{type:'image',url:hero,size:'full',aspectRatio:'4:5',aspectMode:'fit',backgroundColor:'#F3F5F9'}}:{}),
   body:{type:'box',layout:'vertical',spacing:'md',contents:[{type:'text',text:'PAIR LIVE — '+title,weight:'bold',size:'lg',wrap:true},label(t('line.topup.card.member',locale),name),label(t('line.topup.card.points',locale),t('line.topup.card.pointsValue',locale,{points})),label(t('line.topup.card.sentAt',locale),when),label(t('line.topup.card.requestId',locale),row.id),label(t('line.topup.card.status',locale),localizedStatus[row.status]?t(localizedStatus[row.status],locale):row.status),...bodyExtra]},
@@ -67,6 +69,7 @@ export function resultMessage(row:CardRow,decision:Decision,adminName:string,alr
 }
 
 export function statusCard(row:CardRow,locale:Locale='th'){
+ if(row.status!=='APPROVED'&&row.status!=='REJECTED')throw new TopupError('invalid_line_card_status');
  const approved=row.status==='APPROVED';
  return card(row,t(approved?'line.topup.card.approved':'line.topup.card.rejected',locale),[],[],undefined,locale);
 }
