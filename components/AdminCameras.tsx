@@ -5,11 +5,12 @@ import {adminError} from '../lib/admin-display';
 import {useEffect,useState} from 'react';
 import VdoViewer,{validatedViewerUrl} from '../modules/external-live/client/VdoViewer';
 import AdminOcrRoi from './AdminOcrRoi';
+import AdminRoundLiveControls from './AdminRoundLiveControls';
 
 type Camera={cameraId:string;slot:number;name:string;status:'READY'|'NOT_CONFIGURED';displayEnabled:boolean;revision:number;viewerUrl:string|null};
 type State={cameras:Camera[];lineNoticeRecipients:number|null};
 const errors:Record<string,string>={camera_conflict:'สถานะกล้องเปลี่ยนจากอีกหน้าจอแล้ว กรุณาลองใหม่',invalid_viewer_url:'URL ต้องเป็น https://vdo.ninja/?view=STREAM_ID เท่านั้น',camera_must_stop_first:'หยุด LIVE ก่อนเปลี่ยน URL',camera_not_configured:'กรุณาบันทึก URL ก่อนเริ่ม LIVE',oa_binding_unverified:'ยังไม่ได้ยืนยันการเชื่อม LINE OA',tenant_binding_missing:'ไม่พบ OA ของบัญชีนี้',admin_forbidden:'ไม่มีสิทธิ์แก้ไขกล้อง'};
-export default function AdminCameras({role}:{role:'admin'|'operator'|'viewer'}){const {locale}=useLanguage();const ui=(key:string,values:Record<string,string|number>={})=>t(key,locale,values);
+export default function AdminCameras({role,mode='viewer'}:{role:'admin'|'operator'|'viewer';mode?:'viewer'|'settings'}){const {locale}=useLanguage();const ui=(key:string,values:Record<string,string|number>={})=>t(key,locale,values);
  const[state,setState]=useState<State|null>(null),[url,setUrl]=useState(''),[dirty,setDirty]=useState(false),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
  const camera=state?.cameras.find(c=>c.slot===1);
  async function load(){const response=await fetch('/api/admin/cameras',{credentials:'same-origin',cache:'no-store'});const value=await response.json();if(!response.ok)throw Error(value.error||'camera_unavailable');setState(value);if(!dirty)setUrl(value.cameras.find((c:Camera)=>c.slot===1)?.viewerUrl||'');return value as State}
@@ -25,15 +26,18 @@ export default function AdminCameras({role}:{role:'admin'|'operator'|'viewer'}){
    window.dispatchEvent(new Event('pair-live:admin-change'));
   }catch(error){setMessage(errors[(error as Error).message]||'ดำเนินการไม่สำเร็จ กรุณาลองใหม่');await load().catch(()=>{})}finally{setBusy(false)}
  }
- return <section className="card admin-cameras" aria-label={ui("กล้องหลัก LIVE")}><h2>{ui("กล้องหลัก · VDO.Ninja")}</h2>
-  {!state?<p role="status">{message||'กำลังโหลดการตั้งค่า...'}</p>:!camera?<p role="alert">{ui("ไม่พบกล้องหลักใน OA นี้")}</p>:<>
-   <p>{ui("สถานะ:")} {camera.displayEnabled?ui("เปิดจอให้สมาชิก"):ui("ซ่อนจอสมาชิก")} · {camera.status==='READY'?ui("บันทึก URL แล้ว"):ui("ยังไม่ตั้งค่า URL")}</p>
-   <p role="status">{ui("ผู้รับแจ้งเตือน LINE:")} <strong>{state.lineNoticeRecipients??0} {ui("ราย")}</strong>{state.lineNoticeRecipients===0?ui(" · ยังไม่มีสมาชิกเปิดรับแจ้งเตือน"):''}</p>
+ return <section className="card admin-cameras" aria-label={mode==='viewer'?ui("กล้องหลัก LIVE"):ui("ตั้งค่ากล้อง")}>
+  {!state?<p role="status">{message||ui("กำลังโหลดการตั้งค่า...")}</p>:!camera?<p role="alert">{ui("ไม่พบกล้องหลักใน OA นี้")}</p>:mode==='settings'?<>
+   <h2>{ui("กล้องหลัก · VDO.Ninja")}</h2>
    <label>{ui("วาง URL VDO.Ninja")}<input className="field" type="url" inputMode="url" autoCapitalize="off" spellCheck={false} value={url} onChange={event=>{setUrl(event.target.value);setDirty(true)}} placeholder="https://vdo.ninja/?view=STREAM_ID" disabled={busy||role!=='admin'}/></label>
-   <div className="camera-controls"><button className="secondary" type="button" disabled={busy||role!=='admin'||camera.displayEnabled} onClick={()=>void act('save')}>{ui("บันทึก URL")}</button><button className="primary" type="button" disabled={busy||role==='viewer'||camera.status!=='READY'||camera.displayEnabled||dirty} onClick={()=>void act('start')}>{ui("เริ่ม LIVE")}</button><button className="secondary" type="button" disabled={busy||role==='viewer'||!camera.displayEnabled} onClick={()=>void act('stop')}>{ui("หยุด LIVE")}</button></div>
-   <h3>{ui("ภาพกล้อง")}</h3>{camera.viewerUrl?<VdoViewer url={camera.viewerUrl} label={ui('ภาพกล้องหลัก')}/>:<div className="external-live-frame"><div className="external-live-empty">{ui("ยังไม่ตั้งค่า URL")}</div></div>}
-   <AdminOcrRoi cameraId={camera.cameraId} canEdit={role==='admin'}/>
-   <p className="muted">{ui("เริ่ม LIVE จะเปิดจอให้สมาชิกเห็นเมื่อมีภาพจากต้นทาง · หยุด LIVE จะซ่อนจอ ไม่สั่งปิดกล้องต้นทาง")}</p>
-  </>}{message&&state&&<p role="status">{adminError(message,locale)}</p>}
+   <button className="primary" type="button" disabled={busy||role!=='admin'||camera.displayEnabled||!dirty} onClick={()=>void act('save')}>{ui("บันทึก URL")}</button>
+   <div className="camera-controls"><button className="primary" type="button" disabled={busy||role==='viewer'||camera.status!=='READY'||camera.displayEnabled||dirty} onClick={()=>void act('start')}>{ui("เริ่ม LIVE")}</button><button className="secondary" type="button" disabled={busy||role==='viewer'||!camera.displayEnabled} onClick={()=>void act('stop')}>{ui("หยุด LIVE")}</button></div>
+   <details><summary>{ui("ตรวจอ่านตัวเลขจากกล้อง")}</summary><AdminOcrRoi cameraId={camera.cameraId} canEdit={role==='admin'}/></details>
+  </>:<>
+   <h2>{ui("ภาพกล้อง")}</h2>
+   {camera.viewerUrl?<VdoViewer url={camera.viewerUrl} label={ui('ภาพกล้องหลัก')}/>:<div className="external-live-frame"><div className="external-live-empty">{ui("ยังไม่ตั้งค่า URL")}</div></div>}
+   <AdminRoundLiveControls role={role} compact/>
+  </>}
+  {message&&state&&<p role="status">{adminError(message,locale)}</p>}
  </section>
 }
