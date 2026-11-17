@@ -4,6 +4,7 @@ import {RoundError} from './core';
 import {walletPathFromDatabase} from '../server/wallet-cutover';
 import {applyWalletMutationWithClient} from '../../modules/member-wallet/server/postgres';
 import {resultParity} from '../line/game-notices';
+import {snapshotResult} from '../line/payload-snapshot';
 import {roundAwardPoints} from './payout';
 import type {CandidateImageStorage} from '../ocr/candidate-image-storage';
 import {validatePng} from '../ocr/evidence';
@@ -79,6 +80,7 @@ export async function settleVerifiedRound(pool:Pool,adminId:string,roundId:strin
   await client.query("SELECT set_config('pair_live.member_id','',true)");
   if(entries!==Number(round.even_people)+Number(round.odd_people))throw new RoundError('round_entries_mismatch',409);
   await client.query(`UPDATE rounds SET status='SETTLED',settled_at=clock_timestamp(),result_number=$2,result_last_digit=$3,result_parity=$4,result_confidence=$5,result_verified_at=clock_timestamp() WHERE id=$1`,[roundId,resultNumber,lastDigit,parity,evidence[0].confidence]);
+  await snapshotResult(client,roundId);
   await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'ROUND_SETTLED',jsonb_build_object('evidence_id',$3::bigint,'entries',$4::int,'awards',$5::int,'rate_numerator',$6::int,'rate_denominator',$7::int,'rounding','FLOOR_PER_ENTRY','points_path',$8::text))",[roundId,automatic?'ocr-worker':adminId,evidence[0].id,entries,awards,config.rate_numerator,config.rate_denominator,pointsPath]);
   await client.query('COMMIT');return {roundId,status:'SETTLED',replayed:false,resultNumber,parity,awards};
  }catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}

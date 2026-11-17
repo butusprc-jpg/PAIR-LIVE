@@ -122,17 +122,21 @@ test('PostgreSQL topup replay, concurrent approvals, rollback, terminal states a
   assert.equal((await run('reject-review',adminA,`topup:v2:review:REJECTED:${rejectRequest.id}`)).result,'REJECTED');
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_member_notifications WHERE request_id=$1',[rejectRequest.id])).rows[0].n,0);
   const retryRequest=await createTopup(db,chatMember,25,randomUUID());
+  await db.query("UPDATE members SET notification_locale='zh-CN' WHERE id=$1",[chatMember]);
   const approvalEvent={webhookEventId:'retry-review',type:'postback' as const,userId:adminA,data:`topup:v2:review:APPROVED:${retryRequest.id}`};
   const failedDeliveries:string[]=[];
-  await assert.rejects(processTopupPostback(db,approvalEvent,{allowlist:allow,fetch:async(_url,init)=>{const payload=JSON.parse(String(init?.body));failedDeliveries.push(JSON.stringify(payload.messages[0]));return new Response('',{status:503})}}),/line_delivery_failed/);
+  const retryPayloads:{to:string;body:string;key:string|null}[]=[];
+  await assert.rejects(processTopupPostback(db,approvalEvent,{allowlist:allow,fetch:async(_url,init)=>{const body=String(init?.body),payload=JSON.parse(body);failedDeliveries.push(JSON.stringify(payload.messages[0]));if(payload.to===memberLine)retryPayloads.push({to:payload.to,body,key:new Headers(init?.headers).get('X-Line-Retry-Key')});return new Response('',{status:503})}}),/line_delivery_failed/);
   assert.equal(failedDeliveries.filter(text=>text.includes('ดำเนินการเติมแต้มไม่สำเร็จ')).length,0);
   const replay=await processTopupPostback(db,approvalEvent,{allowlist:allow,fetch:fakeFetch});
   assert.equal(replay.duplicate,true);
   assert.ok(seen.some(x=>x.to===adminA&&x.text.includes('อนุมัติแล้ว')));
   assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[chatMember])).rows[0].demo_points,625);
   assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[retryRequest.id])).rows[0].status,'RETRY');
+  await db.query("UPDATE members SET notification_locale='en' WHERE id=$1",[chatMember]);
   await db.query('UPDATE member_topup_member_notifications SET next_attempt_at=now()-interval \'1 second\' WHERE request_id=$1',[retryRequest.id]);
-  assert.equal((await dispatchApprovedMemberLine(db,{token:'synthetic-token',fetch:fakeFetch})).sent,1);
+  assert.equal((await dispatchApprovedMemberLine(db,{token:'synthetic-token',fetch:async(_url,init)=>{const body=String(init?.body),payload=JSON.parse(body);retryPayloads.push({to:payload.to,body,key:new Headers(init?.headers).get('X-Line-Retry-Key')});return new Response('',{status:200})}})).sent,1);
+  assert.equal(retryPayloads.length,2);assert.deepEqual(retryPayloads[0],retryPayloads[1]);assert.equal((await db.query('SELECT payload_locale FROM member_topup_member_notifications WHERE request_id=$1',[retryRequest.id])).rows[0].payload_locale,'zh-CN');
   assert.equal((await db.query('SELECT status FROM member_topup_member_notifications WHERE request_id=$1',[retryRequest.id])).rows[0].status,'SENT');
   assert.equal((await db.query('SELECT count(*)::int n FROM member_topup_audit WHERE request_id=$1',[retryRequest.id])).rows[0].n,1);
  }finally{for(const [key,value] of Object.entries({LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:prior.token,LINE_LOGIN_CHANNEL_ID:prior.login,LINE_MESSAGING_CHANNEL_ID:prior.messaging,TOPUP_IMAGE_SIGNING_SECRET:prior.secret})){if(value===undefined)delete process.env[key];else process.env[key]=value}}

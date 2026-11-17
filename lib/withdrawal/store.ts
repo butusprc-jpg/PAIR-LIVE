@@ -1,5 +1,6 @@
 import type {Pool,PoolClient} from 'pg';
 import {walletPathFromDatabase} from '../server/wallet-cutover';
+import {snapshotWithdrawal} from '../line/payload-snapshot';
 import {TopupError,uuid,validatePoints} from '../topup/store';
 
 export type WithdrawalAction='TRANSFERRED'|'REJECTED';
@@ -72,5 +73,6 @@ export async function decideWithdrawalWithClient(c:PoolClient,adminId:string,req
    [r.member_id,channel])).rows[0]?.provider_user_id:null;
   if(user&&/^U[0-9a-f]{32}$/i.test(user))
    await c.query("INSERT INTO member_withdrawal_line_outbox(request_id,recipient_user_id,purpose) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",[r.id,user,action==='TRANSFERRED'?'MEMBER_TRANSFERRED':'MEMBER_REJECTED']);
+  if(user&&/^U[0-9a-f]{32}$/i.test(user))await snapshotWithdrawal(c,r.id,action==='TRANSFERRED'?'MEMBER_TRANSFERRED':'MEMBER_REJECTED');
   return {...result,replayed:false};
 }

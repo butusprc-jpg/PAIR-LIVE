@@ -1,4 +1,5 @@
 import type {PoolClient} from 'pg';
+import {snapshotCountdown} from '../line/payload-snapshot';
 
 /** The round close time, not the worker tick, is the countdown deadline. */
 export function automaticCountdownDue(opensAt:Date,closesAt:Date,now:Date){
@@ -16,6 +17,7 @@ export async function startAutomaticCountdown(client:PoolClient,row:Record<strin
   JOIN members m ON m.id=p.member_id AND m.status='active'
   JOIN LATERAL (SELECT provider_user_id FROM member_identities WHERE member_id=p.member_id AND provider='line' AND provider_channel_id=$3 ORDER BY last_login_at DESC LIMIT 1) i ON true
   WHERE p.enabled=true AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}$' ON CONFLICT DO NOTHING`,[row.id,row.settlement_oa_id,process.env.LINE_LOGIN_CHANNEL_ID??'']);
+ await snapshotCountdown(client,String(row.id));
  await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) SELECT id,'engine','COUNTDOWN_STARTED',jsonb_build_object('duration_seconds',greatest(0,extract(epoch FROM (closes_at-countdown_started_at))::int),'automatic',true) FROM rounds WHERE id=$1",[row.id]);
  return changed.rows[0];
 }

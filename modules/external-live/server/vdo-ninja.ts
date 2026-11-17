@@ -1,6 +1,7 @@
 import {createHash,randomBytes} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
 import {LiveError} from '../types';
+import {snapshotLiveStart} from '../../../lib/line/payload-snapshot';
 import {decryptControlKey,encryptControlKey,newControlKey,readPublisher,remotePublisherUrl,setCamera,type RemoteTransport} from './remote-control';
 
 type Tenant={id:string;line_oa_id:string;shop_name:string;enabled:boolean;paused:boolean;deleted_at:Date|null;expires_at:Date;verified_token_hash:string|null};
@@ -21,7 +22,7 @@ export async function changeVdoLive(db:Pool,channelId:string,action:'connect'|'s
  SELECT $1,p.member_id,$2,i.provider_user_id FROM member_countdown_line_preferences p
  JOIN members m ON m.id=p.member_id AND m.status='active'
  JOIN LATERAL (SELECT provider_user_id FROM member_identities WHERE member_id=p.member_id AND provider='line' AND provider_channel_id=$3 ORDER BY last_login_at DESC LIMIT 1) i ON true
- WHERE p.enabled=true AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}$' ON CONFLICT DO NOTHING`,[event.id,tenant.id,channelId])}
+ WHERE p.enabled=true AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}$' ON CONFLICT DO NOTHING`,[event.id,tenant.id,channelId]);await snapshotLiveStart(client,event.id)}
  }}else{if(previous.remote_key_ciphertext){try{await setCamera(decryptControlKey(previous.remote_key_ciphertext),false,transport)}catch{warning='publisher_stop_unconfirmed'}}else warning='publisher_not_connected';if(previous.display_enabled){updated=(await client.query<Row>(`UPDATE vdo_ninja_tenants SET display_enabled=false,revision=revision+1,updated_at=now(),updated_by=$2 WHERE oa_id=$1 RETURNING ${columns}`,[tenant.id,actor])).rows[0];await audit(client,tenant.id,actor,'STOP',previous,updated)}else updated=previous}await client.query('COMMIT')}catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}return adminState(updated,tenant,transport,warning)}
 
 

@@ -1,11 +1,11 @@
-import {recipientLocale} from '../line/locale';
+import {snapshotWithdrawal} from '../line/payload-snapshot';
 import {t,type Locale} from '../i18n';
 import type {Pool,PoolClient} from 'pg';
 import {pushLine,verifiedLineAdmin} from '../topup/line-provider';
 import {decideWithdrawalWithClient} from './store';
 import {TopupError,uuid} from '../topup/store';
 
-type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:string;attempts:number;requested_points:number;payout_details:string;display_name:string;status:string;debit_timing:string;notification_locale:string};
+type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:string;attempts:number;requested_points:number;payout_details:string;display_name:string;status:string;debit_timing:string;payload_messages:unknown[]|null};
 async function scoped<T>(pool:Pool,fn:(c:PoolClient)=>Promise<T>):Promise<T>{
  const c=await pool.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const v=await fn(c);await c.query('COMMIT');return v}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
@@ -40,7 +40,12 @@ export function withdrawalStatusCard(row:{request_id:string;requested_points:num
  ]}}};
 }
 export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch}={}){
- const rows=await scoped(pool,async c=>(await c.query<QueueRow>(`
+ const rows=await scoped(pool,async c=>{
+  await c.query(`UPDATE member_withdrawal_line_outbox SET status='FAILED',attempts=5,lease_until=NULL,last_error='payload_snapshot_review_required'
+   WHERE purpose IN ('MEMBER_TRANSFERRED','MEMBER_REJECTED') AND payload_messages IS NULL AND attempts>0 AND status IN ('PENDING','RETRY','PROCESSING')`);
+  const legacy=(await c.query<{request_id:string;purpose:'MEMBER_TRANSFERRED'|'MEMBER_REJECTED'}>(`SELECT request_id,purpose FROM member_withdrawal_line_outbox WHERE purpose IN ('MEMBER_TRANSFERRED','MEMBER_REJECTED') AND payload_messages IS NULL AND attempts=0 AND status IN ('PENDING','RETRY') FOR UPDATE SKIP LOCKED LIMIT 10`)).rows;
+  for(const item of legacy)await snapshotWithdrawal(c,item.request_id,item.purpose);
+  return (await c.query<QueueRow>(`
   WITH candidate AS (
    SELECT id FROM member_withdrawal_line_outbox
    WHERE ((status IN ('PENDING','RETRY') AND next_attempt_at<=now())
@@ -58,18 +63,16 @@ export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch
     (SELECT m.display_name FROM member_withdrawal_requests r JOIN members m ON m.id=r.member_id WHERE r.id=o.request_id) AS display_name,
     (SELECT status FROM member_withdrawal_requests WHERE id=o.request_id) AS status,
     (SELECT debit_timing FROM member_withdrawal_requests WHERE id=o.request_id) AS debit_timing,
-    (SELECT m.notification_locale FROM member_withdrawal_requests r JOIN members m ON m.id=r.member_id WHERE r.id=o.request_id) AS notification_locale
- `)).rows);
+    o.payload_messages
+ `)).rows});
  let sent=0,retry=0,failed=0;
  for(const row of rows){
   let status='SENT',error:null|string=null;
-  const message=row.purpose==='ADMIN_REQUEST'?
-   (row.status==='PENDING'?withdrawalCard(row):{type:'text',text:`คำขอถอน ${row.requested_points} แต้ม · สถานะล่าสุด ${row.status}`})
-   :{type:'text',text:row.purpose==='MEMBER_TRANSFERRED'?
-    t('line.withdraw.transferred',recipientLocale(row.notification_locale),{points:row.requested_points,reference:row.request_id}):
-    row.debit_timing==='PREDEBIT'?t('line.withdraw.rejectedRefund',recipientLocale(row.notification_locale),{points:row.requested_points,reference:row.request_id}):
-    t('line.withdraw.rejected',recipientLocale(row.notification_locale),{points:row.requested_points,reference:row.request_id})};
-  try{await pushLine(row.recipient_user_id,[message],row.id,opts.fetch)}
+  try{const messages=row.purpose==='ADMIN_REQUEST'
+   ?[row.status==='PENDING'?withdrawalCard(row):{type:'text',text:`คำขอถอน ${row.requested_points} แต้ม · สถานะล่าสุด ${row.status}`} ]
+   :row.payload_messages;
+   if(!Array.isArray(messages)||messages.length!==1)throw new Error('line_payload_snapshot_missing');
+   await pushLine(row.recipient_user_id,messages,row.id,opts.fetch)}
   catch(e){const code=e instanceof Error&&'status' in e?Number((e as {status:number}).status):503;status=(code===503||code===429||code>=500)&&row.attempts<5?'RETRY':'FAILED';error='line_delivery_failed'}
   await scoped(pool,c=>c.query("UPDATE member_withdrawal_line_outbox SET status=$2,lease_until=NULL,next_attempt_at=now()+($3::integer*interval '1 second'),last_error=$4,sent_at=CASE WHEN $2='SENT' THEN now() ELSE sent_at END WHERE id=$1 AND status='PROCESSING' AND attempts=$5",[row.id,status,Math.min(3600,30*2**(row.attempts-1)),error,row.attempts]));
   if(status==='SENT')sent++;else if(status==='RETRY')retry++;else failed++;

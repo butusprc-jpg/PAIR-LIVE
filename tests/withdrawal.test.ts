@@ -135,6 +135,17 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    const [c1,c2]=await Promise.all(['device-a','device-b'].map(webhookEventId=>processWithdrawalPostback(db!,{webhookEventId,userId:adminLine,data:`withdraw:v1:transfer:${concurrent.id}`},{allowlist,fetch:fakeFetch})));
    assert.deepEqual([('replayed' in c1&&c1.replayed),('replayed' in c2&&c2.replayed)].sort(),[false,true]);assert.equal(await balance(),615);
    assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_audit WHERE request_id=$1',[concurrent.id])).rows[0].n,1);
+   const frozen=await createWithdrawal(db,member,10,'locale retry fixture',randomUUID(),recipients);
+   await db.query("UPDATE members SET notification_locale='zh-CN' WHERE id=$1",[member]);
+   await decideWithdrawal(db,admin,frozen.id,'REJECTED');
+   const retryBodies:{to:string;body:string;key:string|null}[]=[];
+   const memberRetryFetch:typeof fetch=async(_url,init)=>{const body=String(init?.body),payload=JSON.parse(body);if(payload.to===memberLine&&body.includes(frozen.id)){retryBodies.push({to:payload.to,body,key:new Headers(init?.headers).get('X-Line-Retry-Key')});return new Response('',{status:retryBodies.length===1?503:200})}return new Response('',{status:200})};
+   await dispatchWithdrawalLine(db,{fetch:memberRetryFetch});
+   assert.equal(retryBodies.length,1);assert.equal((await db.query("SELECT payload_locale FROM member_withdrawal_line_outbox WHERE request_id=$1 AND purpose='MEMBER_REJECTED'",[frozen.id])).rows[0].payload_locale,'zh-CN');
+   await db.query("UPDATE members SET notification_locale='en' WHERE id=$1",[member]);
+   await db.query("UPDATE member_withdrawal_line_outbox SET next_attempt_at=now()-interval '1 second' WHERE request_id=$1 AND purpose='MEMBER_REJECTED'",[frozen.id]);
+   await Promise.all([dispatchWithdrawalLine(db,{fetch:memberRetryFetch}),dispatchWithdrawalLine(db,{fetch:memberRetryFetch})]);
+   assert.equal(retryBodies.length,2);assert.deepEqual(retryBodies[0],retryBodies[1]);
   }finally{
    if(oldLogin===undefined)delete process.env.LINE_LOGIN_CHANNEL_ID;else process.env.LINE_LOGIN_CHANNEL_ID=oldLogin;
    if(oldToken===undefined)delete process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;else process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN=oldToken;

@@ -1,19 +1,24 @@
-import {recipientLocale} from './locale';
+import {snapshotResult} from './payload-snapshot';
 import {createHash} from 'node:crypto';
 import type {Pool} from 'pg';
 import {database} from '../server/db';
 import {pushLine,providerPairConfigured} from '../topup/line-provider';
 import {quotaAllows} from './round-broadcast';
-import {resultNoticeCard} from './game-notices';
 
-type Job={entry_id:string;member_id:string;recipient_user_id:string;retry_key:string;attempts:number;notification_locale:string};
+type Job={entry_id:string;member_id:string;recipient_user_id:string;retry_key:string;attempts:number;payload_messages:unknown[]|null;round_id:string};
 type State={round_id:string;round_status:string;result_number:string|null;side:'even'|'odd';demo_points:number;entry_status:string;oa_match:boolean;member_status:string;line_oa_id:string;enabled:boolean;paused:boolean;deleted_at:Date|null;expires_at:Date;verified_token_hash:string|null;identity_valid:boolean;award_points:string|null;ledger_points:string|null;ledger_type:string|null;legacy_ledger_points:string|null};
 export async function dispatchRoundResultLine(pool:Pool=database(),fetcher:typeof fetch=fetch){
  const claimant=await pool.connect();let job:Job|undefined;
- try{await claimant.query('BEGIN');const selected=await claimant.query<Job>(`SELECT o.entry_id,o.member_id,o.recipient_user_id,o.retry_key,o.attempts,m.notification_locale FROM round_result_line_outbox o JOIN members m ON m.id=o.member_id
+ try{await claimant.query('BEGIN');const selected=await claimant.query<Job>(`SELECT o.entry_id,o.member_id,o.recipient_user_id,o.retry_key,o.attempts,o.payload_messages,o.round_id FROM round_result_line_outbox o JOIN members m ON m.id=o.member_id
  WHERE o.status IN ('PENDING','FAILED','SENDING') AND o.attempts<5 AND o.next_attempt_at<=clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until<clock_timestamp())
  ORDER BY o.next_attempt_at,o.entry_id LIMIT 1 FOR UPDATE OF o SKIP LOCKED`);job=selected.rows[0];
   if(!job){await claimant.query('COMMIT');return null}
+ if(!job.payload_messages){
+  if(job.attempts>0){await claimant.query("UPDATE round_result_line_outbox SET status='UNDELIVERABLE',attempts=5,lease_until=NULL,last_error='payload_snapshot_review_required' WHERE entry_id=$1",[job.entry_id]);await claimant.query('COMMIT');return null}
+  await snapshotResult(claimant,String(job.round_id),job.entry_id);
+  job.payload_messages=(await claimant.query<{payload_messages:unknown[]}>("SELECT payload_messages FROM round_result_line_outbox WHERE entry_id=$1",[job.entry_id])).rows[0]?.payload_messages;
+  if(!Array.isArray(job.payload_messages)||job.payload_messages.length!==1){await claimant.query("UPDATE round_result_line_outbox SET status='UNDELIVERABLE',attempts=5,lease_until=NULL,last_error='payload_snapshot_review_required' WHERE entry_id=$1 AND payload_messages IS NULL",[job.entry_id]);await claimant.query('COMMIT');return null}
+ }
   await claimant.query("UPDATE round_result_line_outbox SET status='SENDING',attempts=attempts+1,lease_until=clock_timestamp()+interval '45 seconds' WHERE entry_id=$1",[job.entry_id]);await claimant.query('COMMIT');
  }catch(error){await claimant.query('ROLLBACK');throw error}finally{claimant.release()}
  const delivery=await pool.connect();try{await delivery.query('BEGIN');await delivery.query('SELECT pg_advisory_xact_lock(748201,22)');await delivery.query("SELECT set_config('pair_live.member_id',$1,true)",[job.member_id]);
@@ -36,8 +41,7 @@ export async function dispatchRoundResultLine(pool:Pool=database(),fetcher:typeo
   if(!bound){code=state?.identity_valid===false?'line_identity_missing':'oa_or_settlement_unavailable';delay=300;terminal=state?.identity_valid===false}
   else if(!valid){code='settlement_record_mismatch';terminal=true;delay=0}
   else try{if(!await quotaAllows(token,fetcher)){code='line_quota_exhausted';delay=3600}else{
-   const card=resultNoticeCard({roundId:String(state.round_id),resultNumber:state.result_number!,chosenSide:state.side,stakePoints:Number(state.demo_points),outcome:state.entry_status as 'CORRECT'|'INCORRECT',creditedPoints:winner?Number(state.award_points):0},recipientLocale(job.notification_locale));
-   await pushLine(job.recipient_user_id,[card],job.retry_key,fetcher,token);sent=true;
+   await pushLine(job.recipient_user_id,job.payload_messages!,job.retry_key,fetcher,token);sent=true;
   }}catch{code='line_temporary';delay=Math.min(3600,30*2**job.attempts)}
   const status=sent?'SENT':terminal?'UNDELIVERABLE':'FAILED';
   await delivery.query(`UPDATE round_result_line_outbox SET status=$2,lease_until=NULL,last_error=$3,sent_at=CASE WHEN $2='SENT' THEN clock_timestamp() ELSE sent_at END,

@@ -48,6 +48,8 @@ test('verified settlement credits once with wallet ledger and rejects unready ro
   assert.equal((await db.query('SELECT count(*)::int n FROM round_result_line_outbox WHERE round_id=$1',[round])).rows[0].n,0);
   assert.equal((await db.query("SELECT count(*)::int n FROM member_wallet_ledger WHERE reference_id=$1",[`ROUND_AWARD_${entries[0]}`])).rows[0].n,0);
   await db.query('DROP TRIGGER fail_settlement_award ON round_settlement_awards');
+  await db.query("UPDATE members SET notification_locale='zh-CN',notification_locale_source='choice' WHERE id=$1",[members[0]]);
+  await db.query("UPDATE members SET notification_locale='en',notification_locale_source='choice' WHERE id=$1",[members[1]]);
   const pair=await Promise.all([settleVerifiedRound(db,admin,String(round)),settleVerifiedRound(db,admin,String(round))]);assert.deepEqual(pair.map(x=>x.replayed).sort(),[false,true]);
   assert.equal(await balance(members[0]),1090);assert.equal(await balance(members[1]),900);
   for(let i=0;i<5;i++)assert.equal((await settleVerifiedRound(db,admin,String(round))).replayed,true);
@@ -57,10 +59,10 @@ test('verified settlement credits once with wallet ledger and rejects unready ro
   assert.equal((await db.query("SELECT count(*)::int n FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_SETTLED'",[round])).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int n FROM round_result_line_outbox WHERE round_id=$1 AND status='PENDING'",[round])).rows[0].n,2);
   assert.equal((await db.query("SELECT count(*)::int n FROM round_result_line_outbox WHERE round_id=$1 AND status='UNDELIVERABLE'",[round])).rows[0].n,1);
-  await db.query("UPDATE members SET notification_locale='zh-CN',notification_locale_source='choice' WHERE id=$1",[members[0]]);
-  await db.query("UPDATE members SET notification_locale='en',notification_locale_source='choice' WHERE id=$1",[members[1]]);
+  assert.equal((await db.query('SELECT payload_locale FROM round_result_line_outbox WHERE entry_id=$1',[entries[0]])).rows[0].payload_locale,'zh-CN');
   const pushes:{to:string;key:string|null;body:string}[]=[];const fetcher:typeof fetch=async(input,init)=>{const target=String(input);if(target.endsWith('/quota'))return Response.json({type:'limited',value:100});if(target.endsWith('/consumption'))return Response.json({totalUsage:0});const payload=JSON.parse(String(init?.body));pushes.push({to:payload.to,key:new Headers(init?.headers).get('X-Line-Retry-Key'),body:JSON.stringify(payload.messages[0])});return new Response('',{status:pushes.length===1?503:pushes.length===2?429:200})};
   const first=await dispatchRoundResultLine(db,fetcher);assert.equal(first?.status,'FAILED');
+  await db.query("UPDATE members SET notification_locale='en' WHERE id=$1",[members[0]]);
   await db.query("UPDATE round_result_line_outbox SET next_attempt_at=now()-interval '1 second' WHERE status='FAILED'");
   const delivered=await Promise.all([dispatchRoundResultLine(db,fetcher),dispatchRoundResultLine(db,fetcher)]);
   assert.equal(delivered.filter(x=>x?.status==='SENT').length,1);assert.equal(delivered.filter(x=>x?.status==='FAILED').length,1);
