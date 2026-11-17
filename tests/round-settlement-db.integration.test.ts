@@ -57,6 +57,8 @@ test('verified settlement credits once with wallet ledger and rejects unready ro
   assert.equal((await db.query("SELECT count(*)::int n FROM round_audit_logs WHERE round_id=$1 AND action='ROUND_SETTLED'",[round])).rows[0].n,1);
   assert.equal((await db.query("SELECT count(*)::int n FROM round_result_line_outbox WHERE round_id=$1 AND status='PENDING'",[round])).rows[0].n,2);
   assert.equal((await db.query("SELECT count(*)::int n FROM round_result_line_outbox WHERE round_id=$1 AND status='UNDELIVERABLE'",[round])).rows[0].n,1);
+  await db.query("UPDATE members SET notification_locale='zh-CN',notification_locale_source='choice' WHERE id=$1",[members[0]]);
+  await db.query("UPDATE members SET notification_locale='en',notification_locale_source='choice' WHERE id=$1",[members[1]]);
   const pushes:{to:string;key:string|null;body:string}[]=[];const fetcher:typeof fetch=async(input,init)=>{const target=String(input);if(target.endsWith('/quota'))return Response.json({type:'limited',value:100});if(target.endsWith('/consumption'))return Response.json({totalUsage:0});const payload=JSON.parse(String(init?.body));pushes.push({to:payload.to,key:new Headers(init?.headers).get('X-Line-Retry-Key'),body:JSON.stringify(payload.messages[0])});return new Response('',{status:pushes.length===1?503:pushes.length===2?429:200})};
   const first=await dispatchRoundResultLine(db,fetcher);assert.equal(first?.status,'FAILED');
   await db.query("UPDATE round_result_line_outbox SET next_attempt_at=now()-interval '1 second' WHERE status='FAILED'");
@@ -65,7 +67,7 @@ test('verified settlement credits once with wallet ledger and rejects unready ro
   await db.query("UPDATE round_result_line_outbox SET next_attempt_at=now()-interval '1 second' WHERE status='FAILED'");
   assert.equal((await dispatchRoundResultLine(db,fetcher))?.status,'SENT');
   assert.equal(pushes.length,4);for(const to of new Set(pushes.map(x=>x.to)))assert.equal(new Set(pushes.filter(x=>x.to===to).map(x=>x.key)).size,1);
-  assert.equal(new Set(pushes.map(x=>x.to)).size,2);assert.ok(pushes.some(x=>x.body.includes('190 แต้ม')&&x.body.includes('ทายถูก')));assert.ok(pushes.some(x=>x.body.includes('0 แต้ม')&&x.body.includes('ทายผิด')));
+  assert.equal(new Set(pushes.map(x=>x.to)).size,2);assert.ok(pushes.some(x=>x.to==='U'+String(1).repeat(32)&&x.body.includes('190 积分')&&x.body.includes('猜中')));assert.ok(pushes.some(x=>x.to==='U'+String(2).repeat(32)&&x.body.includes('0 Points')&&x.body.includes('Incorrect')));assert.ok(pushes.every(x=>!x.body.includes('{points}')&&!x.body.includes('{round}')));
   assert.equal(await balance(members[0]),1090);assert.equal(await balance(members[1]),900);assert.equal(await balance(members[2]),950);
   assert.equal(await dispatchRoundResultLine(db,fetcher),null);
   await db.query('INSERT INTO round_reset_epochs(created_at) VALUES(now())');

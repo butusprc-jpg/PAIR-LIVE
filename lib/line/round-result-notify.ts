@@ -11,7 +11,7 @@ type State={round_id:string;round_status:string;result_number:string|null;side:'
 export async function dispatchRoundResultLine(pool:Pool=database(),fetcher:typeof fetch=fetch){
  const claimant=await pool.connect();let job:Job|undefined;
  try{await claimant.query('BEGIN');const selected=await claimant.query<Job>(`SELECT o.entry_id,o.member_id,o.recipient_user_id,o.retry_key,o.attempts,m.notification_locale FROM round_result_line_outbox o JOIN members m ON m.id=o.member_id
- WHERE status IN ('PENDING','FAILED','SENDING') AND attempts<5 AND next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<clock_timestamp())
+ WHERE o.status IN ('PENDING','FAILED','SENDING') AND o.attempts<5 AND o.next_attempt_at<=clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until<clock_timestamp())
  ORDER BY o.next_attempt_at,o.entry_id LIMIT 1 FOR UPDATE OF o SKIP LOCKED`);job=selected.rows[0];
   if(!job){await claimant.query('COMMIT');return null}
   await claimant.query("UPDATE round_result_line_outbox SET status='SENDING',attempts=attempts+1,lease_until=clock_timestamp()+interval '45 seconds' WHERE entry_id=$1",[job.entry_id]);await claimant.query('COMMIT');
