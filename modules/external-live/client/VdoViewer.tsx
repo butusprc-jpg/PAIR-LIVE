@@ -48,16 +48,16 @@ export default function VdoViewer({url,label,minimal=false,overlayDigit}:{url:st
   if(!safeUrl)return;
   try{if(isLineWebView(navigator.userAgent)){const auth=await initLIFF();if(!auth)return;auth.client.openWindow({url:safeUrl,external:true})}
    else window.open(safeUrl,'_blank','noopener,noreferrer')}
-  catch{setOpenError('เปิดเบราว์เซอร์ภายนอกไม่สำเร็จ ให้เลือกเมนู ⋯ ใน LINE แล้วกดเปิดในเบราว์เซอร์')}
+  catch{setOpenError(m('admin.viewer.externalError'))}
  }
- if(!safeUrl)return <div className="external-live-frame">{!minimal&&<div className="external-live-empty" role="status">ลิงก์ LIVE ไม่ถูกต้อง</div>}</div>;
+ if(!safeUrl)return <div className="external-live-frame">{!minimal&&<div className="external-live-empty" role="status">{m('admin.viewer.invalidUrl')}</div>}</div>;
  return <><div className="external-live-frame"><iframe ref={frame} src={safeUrl} title={label}
   onLoad={()=>setFrameLoaded(true)} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen
   referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-presentation"/>
   {overlayDigit&&<div className="live-result-overlay" role="status" aria-label={m('round.lastDigit',{digit:overlayDigit})}>{overlayDigit}</div>}
-  {!minimal&&!frameLoaded&&status==='CHECKING'&&<div className="external-live-empty vdo-waiting" role="status">กำลังเปิด Player...</div>}
+  {!minimal&&!frameLoaded&&status==='CHECKING'&&<div className="external-live-empty vdo-waiting" role="status">{m('admin.viewer.opening')}</div>}
  </div>{!minimal&&<><p className="muted" role="status">
-  {status==='CONFIRMED'?'ONLINE — ตรวจพบเฟรมภาพสด':status==='CHECKING'?'กำลังตรวจภาพ LIVE (ไม่เกิน 12 วินาที)':'Player เปิดอยู่ แต่ยืนยันเฟรมอัตโนมัติไม่ได้ — ตรวจภาพที่จอหรือทดสอบ OCR'}
-  {' · '}<button type="button" className="secondary" onClick={()=>void openExternal()}>เปิดในเบราว์เซอร์ภายนอก</button>
+  {m(status==='CONFIRMED'?'admin.viewer.confirmed':status==='CHECKING'?'admin.viewer.checking':'admin.viewer.unverified')}
+  {' · '}<button type="button" className="secondary" onClick={()=>void openExternal()}>{m('admin.viewer.external')}</button>
  </p>{openError&&<p role="status">{openError}</p>}</>}</>;
 }

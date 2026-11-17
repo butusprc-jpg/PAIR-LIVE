@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {useLanguage} from '../lib/LanguageProvider';
+import {LanguageSwitch} from '../lib/LanguageSwitch';
 import {t,formatNumber} from '../lib/i18n';
 import {memberError,memberSide} from '../lib/member-translation';
 import {Activity,BarChart3,ChevronRight,Coins,History,LogOut,Moon,BookOpen,Sun,User,Wallet,X} from 'lucide-react';
@@ -31,7 +32,7 @@ export default function Home(){
  const m=(key:string,values:Record<string,string|number>={})=>t(key,locale,values);
  const sideLabel=(value:Side)=>memberSide(value,locale);
  const entryResult=(value:string)=>value==='ถูก'?m('member.correct'):value==='ผิด'?m('member.incorrect'):value==='รอผล'?m('member.pending'):value;
- const languageSwitch=<div className="member-language-switch" role="group" aria-label={m('common.language')}>{([['th','ไทย'],['zh-CN','中文'],['en','EN']] as const).map(([code,label])=><button key={code} type="button" lang={code} aria-pressed={locale===code} onClick={()=>chooseLanguage(code)}>{label}</button>)}</div>;
+ const languageSwitch=<LanguageSwitch/>;
  const[adminEntry,setAdminEntry]=useState(false);
  const[rememberSession,setRememberSession]=useState(true);
  const[auth,setAuth]=useState<'loading'|'member'|'login'|'error'>('loading'),[authError,setAuthError]=useState('');
