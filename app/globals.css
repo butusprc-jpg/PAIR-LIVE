@@ -126,3 +126,9 @@ main:has(.member-transfer){padding-bottom:calc(120px + env(safe-area-inset-botto
 /* Member header: language selector stays immediately beside the settings gear. */
 .member-header-tools{display:flex;align-items:center;gap:5px;flex-shrink:0}
 @media(max-width:600px){.top .right .member-header-tools{display:flex;align-items:center;gap:4px;max-width:100%}.top .right .member-header-tools .member-language-switch{flex-basis:auto;justify-content:center}.top .right .member-header-tools .member-language-switch button{padding:4px 5px}.bottom button{min-width:0;flex:1}}
+
+/* Camera operator view: only the round start/cancel controls appear below the video. */
+.admin-cameras .admin-round-live-compact{margin-top:12px}
+.admin-cameras .admin-round-live-compact>.camera-controls{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:0}
+.admin-cameras .admin-round-live-compact>.camera-controls button{min-width:0}
+.admin-cameras>details{margin-top:12px}
