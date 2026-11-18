@@ -5,6 +5,9 @@ COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci
 COPY --chown=node:node tsconfig.json ./
 COPY --chown=node:node lib ./lib
+# Runtime i18n catalogs imported by lib/i18n.ts (worker LINE notifications)
+COPY --chown=node:node locales ./locales
+RUN test -s locales/th.json && test -s locales/en.json && test -s locales/zh-CN.json
 COPY --chown=node:node modules ./modules
 COPY --chown=node:node scripts ./scripts
 RUN apt-get update && apt-get install -y --no-install-recommends chromium imagemagick tesseract-ocr ca-certificates && rm -rf /var/lib/apt/lists/*
