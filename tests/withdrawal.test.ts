@@ -104,8 +104,10 @@ test('PostgreSQL approval debit, old predebit, webhook replay, and notifications
    assert.equal((await db.query('SELECT status FROM member_withdrawal_requests WHERE id=$1',[tooLarge.id])).rows[0].status,'PENDING');
    assert.equal((await db.query('SELECT count(*)::int n FROM member_withdrawal_audit WHERE request_id=$1',[tooLarge.id])).rows[0].n,0);
    assert.equal((await processWithdrawalPostback(db,{webhookEventId:'old-approved',userId:adminLine,data:`withdraw:v1:transfer:${old100}`},{allowlist,fetch:fakeFetch})).result,'TRANSFERRED');assert.equal(await balance(),400);
+   assert.deepEqual((await db.query('SELECT balance_before,balance_after,points_changed FROM member_withdrawal_audit WHERE request_id=$1',[old100])).rows[0],{balance_before:400,balance_after:400,points_changed:0});
    assert.equal((await decideWithdrawal(db,admin,old100,'TRANSFERRED')).replayed,true);assert.equal(await balance(),400);
    assert.equal((await processWithdrawalPostback(db,{webhookEventId:'old-rejected',userId:adminLine,data:`withdraw:v1:reject:${old300}`},{allowlist,fetch:fakeFetch})).result,'REJECTED');assert.equal(await balance(),700);
+   assert.deepEqual((await db.query('SELECT balance_before,balance_after,points_changed FROM member_withdrawal_audit WHERE request_id=$1',[old300])).rows[0],{balance_before:400,balance_after:700,points_changed:300});
    assert.match(JSON.stringify(delivery.at(-1)?.message),/ปฏิเสธคำขอแล้ว/);
    assert.equal((await decideWithdrawal(db,admin,old300,'REJECTED')).replayed,true);assert.equal(await balance(),700);
    const rollback=await createWithdrawal(db,member,60,'rollback fixture',randomUUID(),recipients);

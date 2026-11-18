@@ -55,17 +55,21 @@ export async function decideWithdrawalWithClient(c:PoolClient,adminId:string,req
   if(!r)throw new TopupError('withdrawal_not_found',404);
   if(r.status!=='PENDING')return {...r,replayed:true};
   if(await walletPathFromDatabase(c)!=='legacy')throw new TopupError('legacy_required',409);
+  const m=(await c.query('SELECT demo_points FROM members WHERE id=$1 FOR UPDATE',[r.member_id])).rows[0];
+  if(!m)throw new TopupError('member_unavailable',409);
+  const balanceBefore=Number(m.demo_points);
+  let pointsChanged=0;
   if(action==='TRANSFERRED'&&r.debit_timing==='ON_APPROVAL'){
-   const m=(await c.query('SELECT demo_points FROM members WHERE id=$1 FOR UPDATE',[r.member_id])).rows[0];
-   if(!m||m.demo_points<r.requested_points)throw new TopupError('withdrawal_insufficient_points',409);
+   if(balanceBefore<r.requested_points)throw new TopupError('withdrawal_insufficient_points',409);
    await c.query('UPDATE members SET demo_points=demo_points-$1,updated_at=now() WHERE id=$2',[r.requested_points,r.member_id]);
+   pointsChanged=-Number(r.requested_points);
   }
   if(action==='REJECTED'&&r.debit_timing==='PREDEBIT'){
-   const m=(await c.query('SELECT demo_points FROM members WHERE id=$1 FOR UPDATE',[r.member_id])).rows[0];
-   if(!m||m.demo_points+r.requested_points>2147483647)throw new TopupError('balance_overflow',409);
+   if(balanceBefore+r.requested_points>2147483647)throw new TopupError('balance_overflow',409);
    await c.query('UPDATE members SET demo_points=demo_points+$1,updated_at=now() WHERE id=$2',[r.requested_points,r.member_id]);
+   pointsChanged=Number(r.requested_points);
   }
-  await c.query('INSERT INTO member_withdrawal_audit(request_id,member_id,admin_id,action,points) VALUES($1,$2,$3,$4,$5)',[r.id,r.member_id,adminId,action,r.requested_points]);
+  await c.query('INSERT INTO member_withdrawal_audit(request_id,member_id,admin_id,action,points,balance_before,balance_after,points_changed) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[r.id,r.member_id,adminId,action,r.requested_points,balanceBefore,balanceBefore+pointsChanged,pointsChanged]);
   const result=(await c.query('UPDATE member_withdrawal_requests SET status=$1,decided_by=$2,decided_at=now() WHERE id=$3 RETURNING *',[action,adminId,r.id])).rows[0];
   const channel=process.env.LINE_LOGIN_CHANNEL_ID;
   const user=channel?(await c.query(
