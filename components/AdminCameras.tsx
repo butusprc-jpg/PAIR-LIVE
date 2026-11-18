@@ -6,6 +6,7 @@ import {useEffect,useState} from 'react';
 import VdoViewer,{validatedViewerUrl} from '../modules/external-live/client/VdoViewer';
 import AdminOcrRoi from './AdminOcrRoi';
 import AdminRoundLiveControls from './AdminRoundLiveControls';
+import AdminRoundScreenStatus from './AdminRoundScreenStatus';
 
 type Camera={cameraId:string;slot:number;name:string;status:'READY'|'NOT_CONFIGURED';displayEnabled:boolean;revision:number;viewerUrl:string|null};
 type State={cameras:Camera[];lineNoticeRecipients:number|null};
@@ -35,7 +36,7 @@ export default function AdminCameras({role,mode='viewer'}:{role:'admin'|'operato
    <details><summary>{ui("ตรวจอ่านตัวเลขจากกล้อง")}</summary><AdminOcrRoi cameraId={camera.cameraId} canEdit={role==='admin'}/></details>
   </>:<>
    <h2>{ui("ภาพกล้อง")}</h2>
-   {camera.viewerUrl?<VdoViewer url={camera.viewerUrl} label={ui('ภาพกล้องหลัก')}/>:<div className="external-live-frame"><div className="external-live-empty">{ui("ยังไม่ตั้งค่า URL")}</div></div>}
+   <div className="admin-camera-stage">{camera.viewerUrl?<VdoViewer url={camera.viewerUrl} label={ui('ภาพกล้องหลัก')}/>:<div className="external-live-frame"><div className="external-live-empty">{ui("ยังไม่ตั้งค่า URL")}</div></div>}<AdminRoundScreenStatus/></div>
    <AdminRoundLiveControls role={role} compact/>
   </>}
   {message&&state&&<p role="status">{adminError(message,locale)}</p>}
