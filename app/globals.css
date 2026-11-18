@@ -134,6 +134,12 @@ main:has(.member-transfer){padding-bottom:calc(120px + env(safe-area-inset-botto
 .admin-cameras>details{margin-top:12px}
 
 /* Admin camera: round and live countdown remain inside the video; action buttons stay below. */
+.app-logo{display:flex;align-items:center;flex-shrink:0;letter-spacing:normal;line-height:1}
+.app-logo img{display:block;width:108px;height:auto;max-height:72px;object-fit:contain}
+.app-logo .brand-demo{align-self:center;margin-left:5px}
+.auth-screen .app-logo{justify-content:center;margin-bottom:8px}
+.app-logo-large img,.auth-screen .app-logo img{width:min(240px,68vw);max-height:none}
+@media(max-width:600px){.top .app-logo img{width:108px;max-height:74px}.top .app-logo .brand-demo{display:none}}
 .admin-camera-stage{position:relative;min-width:0}
 .admin-camera-stage>.external-live-frame{margin-top:14px}
 .admin-screen-round-overlay{position:absolute;z-index:5;top:26px;left:12px;right:12px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;pointer-events:none;color:#fff}

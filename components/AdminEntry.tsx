@@ -3,6 +3,7 @@ import {useLanguage} from '../lib/LanguageProvider';
 import {t,formatNumber,formatDate} from '../lib/i18n';
 import {useEffect,useState} from 'react';
 import {initLIFF} from '../lib/liff';
+import AppLogo from './AppLogo';
 import {adminRequest,challenge,clientError} from '../modules/admin-auth/client/http';
 
 export function AdminEntry(){const {locale}=useLanguage();const ui=(key:string,values:Record<string,string|number>={})=>t(key,locale,values);
@@ -26,7 +27,7 @@ export function AdminEntry(){const {locale}=useLanguage();const ui=(key:string,v
  }
  useEffect(()=>{void enter()},[]);
  return <div className="app auth-screen"><section className="card" style={{maxWidth:440,width:'100%'}}>
-  <h1>PAIR LIVE · ADMIN</h1>
+  <AppLogo context="ADMIN" large/><h1>{ui("เข้าสู่ระบบแอดมิน")}</h1>
   {busy?<p role="status">{ui("กำลังตรวจสิทธิ์บัญชี LINE ผู้ดูแล...")}</p>:error?<><p role="alert">{error}</p><button className="primary" type="button" onClick={()=>void enter()}>{ui("ลองเข้าสู่ระบบแอดมินอีกครั้ง")}</button></>:<p>{ui("กำลังเปิดหน้าแอดมิน...")}</p>}
   <p className="muted">{ui("เฉพาะบัญชี LINE ที่ได้รับสิทธิ์แอดมินเท่านั้น")}</p>
  </section></div>;

@@ -10,8 +10,8 @@ test('ADMIN shows independent LIVE and round start/stop controls wired to protec
  const admin=await readFile(new URL('../app/admin/page.tsx',import.meta.url),'utf8');
  const cameras=await readFile(new URL('../components/AdminCameras.tsx',import.meta.url),'utf8');
  const controls=await readFile(new URL('../components/AdminRoundLiveControls.tsx',import.meta.url),'utf8');
- assert.match(admin,/tab==='rounds'&&[\s\S]*?<AdminRoundLiveControls role=\{role!\}/);
- assert.doesNotMatch(cameras,/<AdminRoundLiveControls/);
+ assert.match(admin,/tab==='camera'&&[\s\S]*?<AdminCameras role=\{role!\}/);
+ assert.match(cameras,/<AdminRoundLiveControls role=\{role\} compact\/>/);
  assert.match(cameras,/act\('start'\)/);
  assert.match(cameras,/act\('stop'\)/);
  assert.match(cameras,/\/api\/admin\/cameras/);
