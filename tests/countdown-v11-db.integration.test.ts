@@ -29,13 +29,21 @@ test('V11 countdown and opt-in outbox are atomic, single-start and isolated',{sk
    else if(minutes===1){await db.query("UPDATE rounds SET countdown_ends_at=clock_timestamp()-interval '1 second' WHERE id=$1",[id]);const state=await tickRoundEngine({allowAutoStart:false});assert.equal(state.round?.status,'CLOSED');await assert.rejects(submitDemoEntry(memberId,id,{side:'even',demoPoints:1,idempotencyKey:randomUUID()}),(error:unknown)=>error instanceof RoundError&&error.code==='round_closed');assert.equal((await db.query('SELECT demo_points FROM members WHERE id=$1',[memberId])).rows[0].demo_points,0)}
    if(minutes!==2)await db.query("UPDATE rounds SET status='SETTLED',settled_at=now() WHERE id=$1",[id]);
   }
-  const pushCalls:string[]=[];const fakeFetch=(async(input:RequestInfo|URL,init?:RequestInit)=>{const address=String(input);if(address.endsWith('/quota'))return Response.json({type:'limited',value:100});if(address.endsWith('/consumption'))return Response.json({totalUsage:0});pushCalls.push(JSON.stringify(init?.body));return new Response('',{status:pushCalls.length===1?503:200})}) as typeof fetch;
+  const pushCalls:{body:string;recipient:string;retryKey:string|null}[]=[];const fakeFetch=(async(input:RequestInfo|URL,init?:RequestInit)=>{const address=String(input);if(address.endsWith('/quota'))return Response.json({type:'limited',value:100});if(address.endsWith('/consumption'))return Response.json({totalUsage:0});const body=String(init?.body);pushCalls.push({body,recipient:JSON.parse(body).to,retryKey:new Headers(init?.headers).get('X-Line-Retry-Key')});if(pushCalls.length===3)throw new Error('synthetic_network_timeout');return new Response('',{status:pushCalls.length===1?503:pushCalls.length===2?429:200})}) as typeof fetch;
   for(let i=0;i<2;i++)await dispatchCountdownLine(db,fakeFetch);await Promise.all([dispatchCountdownLine(db,fakeFetch),dispatchCountdownLine(db,fakeFetch)]);
   assert.equal(pushCalls.length,1); // stopped and expired countdowns never send.
   const pending=await db.query("SELECT status,last_error FROM round_countdown_line_outbox WHERE round_id=$1",[roundIds[2]]);assert.equal(pending.rows[0].status,'FAILED');assert.equal(pending.rows[0].last_error,'line_temporary');
   await db.query("UPDATE members SET notification_locale='en' WHERE id=$1",[memberId]);
-  await db.query('UPDATE round_countdown_line_outbox SET next_attempt_at=now() WHERE round_id=$1',[roundIds[2]]);await dispatchCountdownLine(db,fakeFetch);assert.equal(pushCalls.length,2);assert.equal((await db.query('SELECT status FROM round_countdown_line_outbox WHERE round_id=$1',[roundIds[2]])).rows[0].status,'SENT');
-  assert.equal(pushCalls[0],pushCalls[1]);assert.equal((await db.query('SELECT payload_locale FROM round_countdown_line_outbox WHERE round_id=$1',[roundIds[2]])).rows[0].payload_locale,'zh-CN');assert.match(pushCalls[1],/120/);
+  for(const expected of [2,3,4]){
+   await db.query('UPDATE round_countdown_line_outbox SET next_attempt_at=now() WHERE round_id=$1',[roundIds[2]]);
+   await Promise.all([dispatchCountdownLine(db,fakeFetch),dispatchCountdownLine(db,fakeFetch)]);
+   assert.equal(pushCalls.length,expected,'concurrent workers claim the outbox once per attempt');
+   assert.deepEqual(pushCalls.at(-1),pushCalls[0],'HTTP body, recipient, and retry key must stay byte-for-byte identical');
+   assert.equal((await db.query('SELECT status FROM round_countdown_line_outbox WHERE round_id=$1',[roundIds[2]])).rows[0].status,expected===4?'SENT':'FAILED');
+  }
+  assert.equal(pushCalls[0].recipient,user);assert.ok(pushCalls[0].retryKey);
+  assert.equal((await db.query('SELECT payload_locale FROM round_countdown_line_outbox WHERE round_id=$1',[roundIds[2]])).rows[0].payload_locale,'zh-CN');assert.match(pushCalls[1].body,/120/);
+  assert.equal(await dispatchCountdownLine(db,fakeFetch),null);assert.equal(pushCalls.length,4,'SENT is never sent again');
   const rows=await db.query('SELECT round_id,status FROM round_countdown_line_outbox WHERE round_id=ANY($1::bigint[]) ORDER BY round_id',[roundIds]);assert.equal(rows.rows.length,3);await db.query("UPDATE rounds SET status='SETTLED',settled_at=now() WHERE id=$1",[roundIds[2]]);assert.equal((await db.query('SELECT count(*)::int AS n FROM round_countdown_line_outbox WHERE round_id=ANY($1::bigint[]) AND oa_id=$2',[roundIds,oaId])).rows[0].n,3);
   const other=await db.query(`INSERT INTO oa_service_control(line_oa_id,shop_name,enabled,expires_at) VALUES($1,'other',false,now()+interval '1 day') RETURNING id`,['@other_'+randomUUID().slice(0,8)]);await db.query('DELETE FROM oa_service_control WHERE id=$1',[other.rows[0].id]);
  }finally{for(const key of Object.keys(old)){if(old[key]===undefined)delete process.env[key];else process.env[key]=old[key]}
