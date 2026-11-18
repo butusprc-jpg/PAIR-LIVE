@@ -1,4 +1,7 @@
 'use client';
+import {useLanguage} from '../../../lib/LanguageProvider';
+import {t} from '../../../lib/i18n';
+import {adminError} from '../../../lib/admin-display';
 
 import {useState} from 'react';
 import {adminRequest, challenge, clientError, type AdminClientError, type AdminClientSession} from './http';
@@ -19,7 +22,7 @@ async function existingLineToken(): Promise<string | null> {
   return login?.accessToken ?? null;
 }
 
-export function AdminLogin({loginEndpoint = '/api/admin/auth/login', challengeEndpoint = '/api/admin/auth/challenge', obtainAccessToken = existingLineToken, onAuthenticated, onError}: AdminLoginProps) {
+export function AdminLogin({loginEndpoint = '/api/admin/auth/login', challengeEndpoint = '/api/admin/auth/challenge', obtainAccessToken = existingLineToken, onAuthenticated, onError}: AdminLoginProps) {const {locale}=useLanguage();const ui=(key:string,values:Record<string,string|number>={})=>t(key,locale,values);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AdminClientError | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
@@ -48,16 +51,16 @@ export function AdminLogin({loginEndpoint = '/api/admin/auth/login', challengeEn
   return <section className={styles.card} aria-labelledby="pair-admin-login-title">
     <div className={styles.brand}>PAIR <span>LIVE</span><span className={styles.adminBadge}>ADMIN</span></div>
     <div className={styles.shield} aria-hidden="true"><svg width="30" height="34" viewBox="0 0 30 34" fill="none"><path d="M15 2 27 7v9c0 7-5 12-12 16C8 28 3 23 3 16V7L15 2Z" stroke="currentColor" strokeWidth="2"/><path d="m9 17 4 4 8-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
-    <p className={styles.eyebrow}>พื้นที่สำหรับผู้ดูแลระบบ</p>
-    <h1 id="pair-admin-login-title" className={styles.title}>เข้าสู่ระบบผู้ดูแล</h1>
-    <p className={styles.description}>ใช้บัญชี LINE ที่ได้รับอนุญาต<br/>เพื่อเข้าใช้งานระบบจัดการ PAIR LIVE</p>
+    <p className={styles.eyebrow}>{ui("พื้นที่สำหรับผู้ดูแลระบบ")}</p>
+    <h1 id="pair-admin-login-title" className={styles.title}>{ui("เข้าสู่ระบบผู้ดูแล")}</h1>
+    <p className={styles.description}>{ui("ใช้บัญชี LINE ที่ได้รับอนุญาต")}<br/>{ui("เพื่อเข้าใช้งานระบบจัดการ PAIR LIVE")}</p>
     <button className={styles.lineButton} type="button" onClick={login} disabled={busy || authenticated} aria-busy={busy}>
       <span className={styles.lineIcon} aria-hidden="true">LINE</span>
-      {busy ? 'กำลังยืนยันตัวตน…' : authenticated ? 'เข้าสู่ระบบแล้ว' : 'เข้าสู่ระบบด้วย LINE'}
+      {ui(busy ? ui("กำลังยืนยันตัวตน…") : authenticated ? ui("เข้าสู่ระบบแล้ว") : ui("เข้าสู่ระบบด้วย LINE"))}
     </button>
-    {error && <p className={styles.error} role="alert">{error.message}</p>}
-    {authenticated && <p className={styles.success} role="status">ยืนยันสิทธิ์ผู้ดูแลเรียบร้อยแล้ว</p>}
-    <div className={styles.notice}><span aria-hidden="true">◈</span><p>เฉพาะบัญชีที่ได้รับสิทธิ์ผู้ดูแลเท่านั้น<br/>บัญชีสมาชิกทั่วไปไม่สามารถเข้าใช้งานได้</p></div>
-    <p className={styles.footer}>ยืนยันตัวตนผ่าน LINE อย่างปลอดภัย</p>
+    {error && <p className={styles.error} role="alert">{adminError(error.message,locale)}</p>}
+    {authenticated && <p className={styles.success} role="status">{ui("ยืนยันสิทธิ์ผู้ดูแลเรียบร้อยแล้ว")}</p>}
+    <div className={styles.notice}><span aria-hidden="true">◈</span><p>{ui("เฉพาะบัญชีที่ได้รับสิทธิ์ผู้ดูแลเท่านั้น")}<br/>{ui("บัญชีสมาชิกทั่วไปไม่สามารถเข้าใช้งานได้")}</p></div>
+    <p className={styles.footer}>{ui("ยืนยันตัวตนผ่าน LINE อย่างปลอดภัย")}</p>
   </section>;
 }

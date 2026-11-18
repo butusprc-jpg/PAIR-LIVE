@@ -2,7 +2,10 @@
 import {useState} from 'react';
 import {isLineWebView} from '../lib/topup/qr-navigation';
 import {initLIFF} from '../lib/liff';
+import {useLanguage} from '../lib/LanguageProvider';
+import {t} from '../lib/i18n';
 export function SaveTopupQr({version:_version}:{version:number}){
+ const {locale}=useLanguage();const m=(key:string)=>t(key,locale);
  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
  async function openQR(){
   if(busy)return;setBusy(true);setMessage('');
@@ -16,10 +19,10 @@ export function SaveTopupQr({version:_version}:{version:number}){
     const auth=await initLIFF();
     if(!auth)return;
     auth.client.openWindow({url:result.url,external:true});
-    setMessage('หากภาพยังอยู่ใน LINE ให้เลือกเมนู ⋯ แล้วเปิดในเบราว์เซอร์ภายนอก');
+    setMessage(m('member.qrLineHint'));
    }else window.location.assign(result.url);
-  }catch{setMessage('เปิด QR ไม่สำเร็จ กรุณาลองใหม่')}
+  }catch{setMessage(m('member.qrOpenError'))}
   finally{setBusy(false)}
  }
- return <div><button className="secondary" type="button" onClick={()=>void openQR()} disabled={busy}>{busy?'กำลังเปิด QR...':'เปิด QR เติมแต้ม'}</button>{message&&<p role="status">{message}</p>}</div>;
+ return <div><button className="secondary" type="button" onClick={()=>void openQR()} disabled={busy}>{busy?m('member.qrOpening'):m('member.qrOpen')}</button>{message&&<p role="status">{message}</p>}</div>;
 }

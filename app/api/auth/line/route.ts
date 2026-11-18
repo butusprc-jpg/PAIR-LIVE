@@ -11,7 +11,7 @@ export async function POST(request:Request){
  try{
   const body=await request.json() as {accessToken?:string;rememberSession?:boolean};
   const identity=await timing.measure('line_verify',()=>verifyLineMember(String(body?.accessToken||'')));
-  const id=await timing.measure('member_query',()=>resolveMember(identity)),remember=body.rememberSession===true,token=await timing.measure('session_create',()=>createMemberSession(id,remember));
+  const id=await timing.measure('member_query',()=>resolveMember(identity)),remember=body.rememberSession===true,token=await timing.measure('session_create',()=>createMemberSession(id,identity,remember));
   const response=NextResponse.json({ok:true},{headers:{'Cache-Control':'no-store','Server-Timing':timing.header()}});setSessionCookie(response,token,remember?rememberSessionSeconds:shortSessionSeconds);return response;
  }catch(error){const response=authError(error);response.headers.set('Server-Timing',timing.header());return response}
 }

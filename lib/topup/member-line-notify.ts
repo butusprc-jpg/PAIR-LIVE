@@ -1,9 +1,11 @@
+import {snapshotApprovedTopup} from '../line/payload-snapshot';
 import type {Pool,PoolClient} from 'pg';
 import {pushLine} from './line-provider';
 import {lineAdminRecipients} from './line-notify';
 import {TopupError} from './store';
 
-type QueueRow={request_id:string;recipient_user_id:string;approved_points:number;attempts:number};
+function checkedMessages(messages:unknown[]|null){if(!Array.isArray(messages)||messages.length!==1)throw new Error('line_payload_snapshot_missing');return messages}
+type QueueRow={request_id:string;recipient_user_id:string;approved_points:number;attempts:number;payload_messages:unknown[]|null};
 async function scoped<T>(pool:Pool,run:(client:PoolClient)=>Promise<T>):Promise<T>{
  const c=await pool.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const v=await run(c);await c.query('COMMIT');return v}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
@@ -25,6 +27,7 @@ export async function enqueueApprovedMemberLine(c:PoolClient,row:{id:string;memb
  await c.query(`INSERT INTO member_topup_member_notifications(request_id,member_id,recipient_user_id,approved_points,status,last_error)
   VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(request_id) DO NOTHING`,
   [row.id,row.member_id,recipient,row.requested_points,recipient?'PENDING':'FAILED',recipient?null:'member_line_unavailable']);
+ if(recipient)await snapshotApprovedTopup(c,row.id);
 }
 export async function queueApprovedMemberLine(pool:Pool,row:{id:string;member_id:string;requested_points:number}){
  return scoped(pool,c=>enqueueApprovedMemberLine(c,row));
@@ -35,10 +38,14 @@ export async function dispatchApprovedMemberLine(pool:Pool,opts:{fetch?:typeof f
  const token=opts.token??process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
  if(!token)return {configured:false,sent:0,retry:0,failed:0};
  const rows=await scoped(pool,async c=>{
+  await c.query(`UPDATE member_topup_member_notifications SET status='FAILED',attempts=5,lease_until=NULL,last_error='payload_snapshot_review_required',updated_at=now()
+   WHERE payload_messages IS NULL AND attempts>0 AND status IN ('PENDING','RETRY','PROCESSING')`);
   await c.query(`UPDATE member_topup_member_notifications SET status='FAILED',lease_until=NULL,
    last_error='retry_window_expired',updated_at=now()
    WHERE (status IN ('PENDING','RETRY') AND created_at<now()-interval '23 hours')
       OR (status='PROCESSING' AND lease_until<now() AND (attempts>=5 OR created_at<now()-interval '23 hours'))`);
+  const legacy=(await c.query<{request_id:string}>(`SELECT request_id FROM member_topup_member_notifications WHERE payload_messages IS NULL AND attempts=0 AND status IN ('PENDING','RETRY') AND recipient_user_id IS NOT NULL FOR UPDATE SKIP LOCKED LIMIT 10`)).rows;
+  for(const item of legacy)await snapshotApprovedTopup(c,item.request_id);
   return (await c.query<QueueRow>(`WITH candidate AS (
    SELECT request_id FROM member_topup_member_notifications
    WHERE ((status IN ('PENDING','RETRY') AND next_attempt_at<=now()) OR (status='PROCESSING' AND lease_until<now()))
@@ -47,12 +54,12 @@ export async function dispatchApprovedMemberLine(pool:Pool,opts:{fetch?:typeof f
   ) UPDATE member_topup_member_notifications n SET status='PROCESSING',attempts=n.attempts+1,
     lease_until=now()+interval '40 seconds',updated_at=now()
     FROM candidate WHERE n.request_id=candidate.request_id
-    RETURNING n.request_id,n.recipient_user_id,n.approved_points,n.attempts`)).rows;
+    RETURNING n.request_id,n.recipient_user_id,n.approved_points,n.attempts,n.payload_messages`)).rows;
  });
  let sent=0,retry=0,failed=0;
  for(const row of rows){
   let status:'SENT'|'RETRY'|'FAILED'='SENT';let code:string|null=null;
-  try{await pushLine(row.recipient_user_id,[{type:'text',text:`✅ เติมจำนวน ${row.approved_points} แต้มที่ต้องการแล้ว`}],row.request_id,opts.fetch,token)}
+  try{await pushLine(row.recipient_user_id,checkedMessages(row.payload_messages),row.request_id,opts.fetch,token)}
   catch(e){const http=e instanceof Error&&'status' in e?Number((e as {status:number}).status):503;
    const temporary=http===503||http===429||http>=500;
    status=temporary&&row.attempts<5?'RETRY':'FAILED';code=temporary?'line_temporary':'line_rejected';

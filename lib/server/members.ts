@@ -23,7 +23,7 @@ export async function resolveMember(identity:VerifiedIdentity){
   await client.query('COMMIT');return id;
  }catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}
 }
-export async function createMemberSession(memberId:string,remember=false){return issueSession(database(),memberId,remember)}
+export async function createMemberSession(memberId:string,identity:VerifiedIdentity,remember=false){return issueSession(database(),memberId,{provider:identity.provider,channelId:identity.providerChannelId},remember)}
 export async function rotateMemberSession(token:string){return rotateSession(database(),token)}
 export async function memberFromSession(token:string){return resolveSession(database(),token)}
 export async function revokeMemberSession(token:string){return revokeSession(database(),token)}

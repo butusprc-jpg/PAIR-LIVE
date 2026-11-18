@@ -1,3 +1,4 @@
+import {t,type Locale} from '../i18n';
 /** Pure presentation only. Never use a preview to trigger settlement or LINE delivery. */
 export type ResultNotice={
   roundId:string;
@@ -14,34 +15,34 @@ export function resultParity(resultNumber:string):'even'|'odd'{
   return Number(digit)%2===0?'even':'odd';
 }
 function points(value:number){if(!Number.isSafeInteger(value)||value<0)throw new Error('invalid_points');return value.toLocaleString('th-TH')}
-export function resultNoticeText(notice:ResultNotice){
+export function resultNoticeText(notice:ResultNotice,locale:Locale='th'){
   if(!/^\d+$/.test(notice.roundId)||!Number.isSafeInteger(notice.stakePoints)||notice.stakePoints<1)throw new Error('invalid_result_notice');
+  if(!['even','odd'].includes(notice.chosenSide)||!['CORRECT','INCORRECT'].includes(notice.outcome))throw new Error('invalid_result_notice');
   const actual=resultParity(notice.resultNumber);
   if((actual===notice.chosenSide)!==(notice.outcome==='CORRECT'))throw new Error('result_outcome_mismatch');
   if(notice.outcome==='CORRECT'&&(notice.creditedPoints===undefined||notice.creditedPoints<1))throw new Error('unconfirmed_payout');
   if(notice.outcome==='INCORRECT'&&notice.creditedPoints!==undefined&&notice.creditedPoints!==0)throw new Error('unconfirmed_payout');
-  const side=(value:'even'|'odd')=>value==='even'?'คู่':'คี่';
+  const side=(value:'even'|'odd')=>t(value==='even'?'line.side.even':'line.side.odd',locale);
   return [
-    'PAIR LIVE — ผลการทาย',
-    '',
-    notice.outcome==='CORRECT'?'ยินดีด้วย! คุณทายถูก':'ผลการทาย: ทายผิด',
-    `รอบที่ ${notice.roundId}`,
-    `ผลออกรางวัล: ${notice.resultNumber} (${side(actual)})`,
-    `คุณทาย: ${side(notice.chosenSide)}`,
-    `จำนวนที่ทาย: ${points(notice.stakePoints)} แต้ม`,
-    notice.outcome==='CORRECT'?`แต้มที่ได้รับรวมทุน: ${points(notice.creditedPoints!)} แต้ม`:'แต้มที่ได้รับ: 0 แต้ม',
-    ...(notice.outcome==='CORRECT'?[`รวมยอดทั้งหมด: ${points(notice.creditedPoints!)} แต้ม`]:[]),
-    `สถานะ: ${notice.outcome==='CORRECT'?'ทายถูก ✅':'ทายผิด ❌'}`
+    t('line.result.title',locale),'',
+    t(notice.outcome==='CORRECT'?'line.result.win':'line.result.lose',locale),
+    t('line.result.round',locale,{round:notice.roundId}),
+    t('line.result.number',locale,{number:notice.resultNumber,side:side(actual)}),
+    t('line.result.chosen',locale,{side:side(notice.chosenSide)}),
+    t('line.result.stake',locale,{points:points(notice.stakePoints)}),
+    notice.outcome==='CORRECT'?t('line.result.credit',locale,{points:points(notice.creditedPoints!)}):t('line.result.zero',locale),
+    ...(notice.outcome==='CORRECT'?[t('line.result.total',locale,{points:points(notice.creditedPoints!)})]:[]),
+    t('line.result.status',locale,{status:t(notice.outcome==='CORRECT'?'line.result.winStatus':'line.result.loseStatus',locale)})
   ].join('\n');
 }
 /** LINE Flex bubble; use only after an authenticated, committed settlement. */
-export function resultNoticeCard(notice:ResultNotice){
+export function resultNoticeCard(notice:ResultNotice,locale:Locale='th'){
   const winning=notice.outcome==='CORRECT';
-  const txt=resultNoticeText(notice);
+  const txt=resultNoticeText(notice,locale);
   const rows=txt.split('\n').filter(Boolean);
   return {
     type:'flex' as const,
-    altText:winning?`PAIR LIVE ทายถูก รอบ ${notice.roundId}`:`PAIR LIVE ทายผิด รอบ ${notice.roundId}`,
+    altText:t(winning?'line.result.altWin':'line.result.altLose',locale,{round:notice.roundId}),
     contents:{
       type:'bubble' as const,
       size:'mega' as const,

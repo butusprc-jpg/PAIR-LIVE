@@ -52,6 +52,10 @@ export const migrationPaths=[
  'migrations/048_ocr_candidate_images.sql',
  'migrations/049_ocr_candidate_settlement.sql',
  'migrations/050_one_shot_ocr.sql',
+ 'migrations/051_member_notification_locale.sql',
+ 'migrations/052_line_outbox_payload_snapshot.sql',
+ 'migrations/053_transaction_rate_limits.sql',
+ 'migrations/054_legacy_transaction_audit.sql',
 ] as const;
 export function assertUniqueMigrationNumbers(paths:readonly string[]){
  const seen=new Map<string,string>(),filenames=new Set<string>();

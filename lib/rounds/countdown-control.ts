@@ -2,6 +2,7 @@ import type {Pool,PoolClient} from 'pg';
 import {createHash} from 'node:crypto';
 import {RoundError} from './core';
 import {providerPairConfigured} from '../topup/line-provider';
+import {snapshotCountdown} from '../line/payload-snapshot';
 const secondsValid=(value:unknown)=>typeof value==='number'&&Number.isInteger(value)&&value>=30&&value<=3600;
 export function countdownSeconds(minutes:unknown){const seconds=typeof minutes==='number'?minutes*60:NaN;if(!secondsValid(seconds))throw new RoundError('invalid_countdown_duration');return seconds}
 export function countdownLabel(seconds:number){return seconds%60===0?`${seconds/60} นาที`:`${seconds} วินาที`}
@@ -33,6 +34,7 @@ export async function changeCountdown(pool:Pool,action:'start'|'stop',actorId:st
     JOIN members m ON m.id=p.member_id AND m.status='active'
     JOIN LATERAL (SELECT provider_user_id FROM member_identities WHERE member_id=p.member_id AND provider='line' AND provider_channel_id=$3 ORDER BY last_login_at DESC LIMIT 1) i ON true
     WHERE p.enabled=true AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}$' ON CONFLICT DO NOTHING`,[round.id,oaId,process.env.LINE_LOGIN_CHANNEL_ID]);
+  await snapshotCountdown(client,String(round.id));
   const selected=await counts(client,String(round.id));await client.query("INSERT INTO round_audit_logs(round_id,actor,action,details) VALUES($1,$2,'COUNTDOWN_STARTED',jsonb_build_object('duration_seconds',$3::int,'recipients',$4::int))",[round.id,actorId,seconds,selected.recipients]);await client.query('COMMIT');return {countdown:state(changed,now,selected,true),replayed:false};
  }
  if(!round.countdown_started_at)throw new RoundError('countdown_not_started',409);

@@ -2,6 +2,7 @@ import type {Pool,PoolClient} from 'pg';
 import {randomBytes} from 'node:crypto';
 import {LiveError} from '../types';
 import {resolveVdoTenant,viewerUrl} from './vdo-ninja';
+import {snapshotLiveStart} from '../../../lib/line/payload-snapshot';
 
 type Site={site_id:string;oa_id:string;name:string;country:string};
 type Camera={camera_id:string;site_id:string;oa_id:string;slot:number;name:string;source_kind:'VDO_NINJA'|'RTSP_GATEWAY'|'IP_CAMERA';stream_id:string|null;display_enabled:boolean;revision:string};
@@ -77,6 +78,7 @@ export async function primaryCameraAction(db:Pool,channel:string,actor:string,in
       JOIN LATERAL (SELECT provider_user_id FROM member_identities WHERE member_id=p.member_id AND provider='line' AND provider_channel_id=$3 ORDER BY last_login_at DESC LIMIT 1) i ON true
       WHERE p.enabled=true AND length(i.provider_user_id)=33 AND i.provider_user_id ~ '^U[0-9a-fA-F]{32}'
       ON CONFLICT DO NOTHING`,[event.id,tenant.id,channel]);
+     await snapshotLiveStart(client,event.id);
     }
    }
   }

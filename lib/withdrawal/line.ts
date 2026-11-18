@@ -1,40 +1,51 @@
+import {snapshotWithdrawal} from '../line/payload-snapshot';
+import {t,type Locale} from '../i18n';
 import type {Pool,PoolClient} from 'pg';
 import {pushLine,verifiedLineAdmin} from '../topup/line-provider';
 import {decideWithdrawalWithClient} from './store';
-import {TopupError} from '../topup/store';
+import {TopupError,uuid} from '../topup/store';
 
-type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:string;attempts:number;requested_points:number;payout_details:string;display_name:string;status:string;debit_timing:string};
+type QueueRow={id:string;request_id:string;recipient_user_id:string;purpose:string;attempts:number;requested_points:number;payout_details:string;display_name:string;status:string;debit_timing:string;payload_messages:unknown[]|null};
 async function scoped<T>(pool:Pool,fn:(c:PoolClient)=>Promise<T>):Promise<T>{
  const c=await pool.connect();try{await c.query('BEGIN');await c.query("SELECT set_config('pair_live.topup_admin','true',true)");const v=await fn(c);await c.query('COMMIT');return v}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
-export function withdrawalCard(row:{request_id:string;display_name:string;requested_points:number;payout_details:string}){
- return {type:'flex',altText:`PAIR LIVE · ขอถอน ${row.requested_points} แต้ม`,contents:{
+export function withdrawalCard(row:{request_id:string;display_name:string;requested_points:number;payout_details:string},locale:Locale='th'){
+ if(!uuid(row.request_id)||!Number.isSafeInteger(row.requested_points)||row.requested_points<1||typeof row.display_name!=='string'||typeof row.payout_details!=='string')throw new TopupError('invalid_withdrawal_card_input');
+ const points=row.requested_points.toLocaleString('th-TH');
+ return {type:'flex',altText:t('line.withdraw.card.requestAlt',locale,{points}),contents:{
   type:'bubble',size:'mega',
   body:{type:'box',layout:'vertical',spacing:'md',contents:[
-   {type:'text',text:'PAIR LIVE — คำขอถอนแต้ม',weight:'bold',size:'lg',wrap:true},
-   {type:'text',text:`สมาชิก: ${row.display_name.slice(0,80)}`,wrap:true},
-   {type:'text',text:`ถอน: ${row.requested_points.toLocaleString('th-TH')} แต้ม`,wrap:true},
-   {type:'text',text:`ข้อมูลรับแต้ม: ${row.payout_details}`,wrap:true},
-   {type:'text',text:`เลขคำขอ: ${row.request_id}`,size:'xs',wrap:true},
-   {type:'text',text:'ตรวจข้อมูลและจ่ายแต้มให้สมาชิกก่อนกดยืนยัน',size:'sm',wrap:true}
+   {type:'text',text:`PAIR LIVE — ${t('line.withdraw.card.requestTitle',locale)}`,weight:'bold',size:'lg',wrap:true},
+   {type:'text',text:t('line.withdraw.card.member',locale,{name:row.display_name.slice(0,80)}),wrap:true},
+   {type:'text',text:t('line.withdraw.card.points',locale,{points}),wrap:true},
+   {type:'text',text:t('line.withdraw.card.details',locale,{details:row.payout_details}),wrap:true},
+   {type:'text',text:t('line.withdraw.card.requestId',locale,{reference:row.request_id}),size:'xs',wrap:true},
+   {type:'text',text:t('line.withdraw.card.reviewNote',locale),size:'sm',wrap:true}
   ]},
   footer:{type:'box',layout:'vertical',spacing:'sm',contents:[
-   {type:'button',style:'primary',color:'#1763DC',action:{type:'postback',label:'ยืนยันโอนแล้ว',data:`withdraw:v1:transfer:${row.request_id}`}},
-   {type:'button',style:'secondary',action:{type:'postback',label:'❌ ปฏิเสธ',data:`withdraw:v1:reject:${row.request_id}`}}
+   {type:'button',style:'primary',color:'#1763DC',action:{type:'postback',label:t('line.withdraw.card.transferButton',locale),data:`withdraw:v1:transfer:${row.request_id}`}},
+   {type:'button',style:'secondary',action:{type:'postback',label:t('line.withdraw.card.rejectButton',locale),data:`withdraw:v1:reject:${row.request_id}`}}
   ]}
  }};
 }
-export function withdrawalStatusCard(row:{request_id:string;requested_points:number;status:'TRANSFERRED'|'REJECTED'}){
- const label=row.status==='TRANSFERRED'?'โอนเรียบร้อยแล้ว':'ปฏิเสธแล้ว';
- return {type:'flex',altText:`PAIR LIVE · ถอนแต้ม${label}`,contents:{type:'bubble',size:'mega',body:{type:'box',layout:'vertical',spacing:'md',contents:[
+export function withdrawalStatusCard(row:{request_id:string;requested_points:number;status:'TRANSFERRED'|'REJECTED'},locale:Locale='th'){
+ if(!uuid(row.request_id)||!Number.isSafeInteger(row.requested_points)||row.requested_points<1)throw new TopupError('invalid_withdrawal_card_input');
+ if(row.status!=='TRANSFERRED'&&row.status!=='REJECTED')throw new TopupError('invalid_withdrawal_card_status');
+ const label=t(row.status==='TRANSFERRED'?'line.withdraw.card.transferred':'line.withdraw.card.rejected',locale);
+ return {type:'flex',altText:t('line.withdraw.card.statusAlt',locale,{status:label}),contents:{type:'bubble',size:'mega',body:{type:'box',layout:'vertical',spacing:'md',contents:[
   {type:'text',text:`PAIR LIVE — ${label}`,weight:'bold',size:'lg',wrap:true},
-  {type:'text',text:`ถอน: ${row.requested_points.toLocaleString('th-TH')} แต้ม`,wrap:true},
-  {type:'text',text:`เลขคำขอ: ${row.request_id}`,size:'xs',wrap:true},
-  {type:'text',text:`สถานะ: ${label}`,wrap:true}
+  {type:'text',text:t('line.withdraw.card.points',locale,{points:row.requested_points.toLocaleString('th-TH')}),wrap:true},
+  {type:'text',text:t('line.withdraw.card.requestId',locale,{reference:row.request_id}),size:'xs',wrap:true},
+  {type:'text',text:t('line.withdraw.card.status',locale,{status:label}),wrap:true}
  ]}}};
 }
 export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch}={}){
- const rows=await scoped(pool,async c=>(await c.query<QueueRow>(`
+ const rows=await scoped(pool,async c=>{
+  await c.query(`UPDATE member_withdrawal_line_outbox SET status='FAILED',attempts=5,lease_until=NULL,last_error='payload_snapshot_review_required'
+   WHERE purpose IN ('MEMBER_TRANSFERRED','MEMBER_REJECTED') AND payload_messages IS NULL AND attempts>0 AND status IN ('PENDING','RETRY','PROCESSING')`);
+  const legacy=(await c.query<{request_id:string;purpose:'MEMBER_TRANSFERRED'|'MEMBER_REJECTED'}>(`SELECT request_id,purpose FROM member_withdrawal_line_outbox WHERE purpose IN ('MEMBER_TRANSFERRED','MEMBER_REJECTED') AND payload_messages IS NULL AND attempts=0 AND status IN ('PENDING','RETRY') FOR UPDATE SKIP LOCKED LIMIT 10`)).rows;
+  for(const item of legacy)await snapshotWithdrawal(c,item.request_id,item.purpose);
+  return (await c.query<QueueRow>(`
   WITH candidate AS (
    SELECT id FROM member_withdrawal_line_outbox
    WHERE ((status IN ('PENDING','RETRY') AND next_attempt_at<=now())
@@ -51,18 +62,17 @@ export async function dispatchWithdrawalLine(pool:Pool,opts:{fetch?:typeof fetch
     (SELECT payout_details FROM member_withdrawal_requests WHERE id=o.request_id) AS payout_details,
     (SELECT m.display_name FROM member_withdrawal_requests r JOIN members m ON m.id=r.member_id WHERE r.id=o.request_id) AS display_name,
     (SELECT status FROM member_withdrawal_requests WHERE id=o.request_id) AS status,
-    (SELECT debit_timing FROM member_withdrawal_requests WHERE id=o.request_id) AS debit_timing
- `)).rows);
+    (SELECT debit_timing FROM member_withdrawal_requests WHERE id=o.request_id) AS debit_timing,
+    o.payload_messages
+ `)).rows});
  let sent=0,retry=0,failed=0;
  for(const row of rows){
   let status='SENT',error:null|string=null;
-  const message=row.purpose==='ADMIN_REQUEST'?
-   (row.status==='PENDING'?withdrawalCard(row):{type:'text',text:`คำขอถอน ${row.requested_points} แต้ม · สถานะล่าสุด ${row.status}`})
-   :{type:'text',text:row.purpose==='MEMBER_TRANSFERRED'?
-    `✅ จ่ายแต้มแล้ว · ${row.requested_points} แต้ม · เลขคำขอ ${row.request_id}`:
-    row.debit_timing==='PREDEBIT'?`❌ คำขอถอนแต้มถูกปฏิเสธ คืน ${row.requested_points} แต้มแล้ว · เลขคำขอ ${row.request_id}`:
-    `❌ คำขอถอน ${row.requested_points} แต้มถูกปฏิเสธ ยอดแต้มไม่เปลี่ยน · เลขคำขอ ${row.request_id}`};
-  try{await pushLine(row.recipient_user_id,[message],row.id,opts.fetch)}
+  try{const messages=row.purpose==='ADMIN_REQUEST'
+   ?[row.status==='PENDING'?withdrawalCard(row):{type:'text',text:`คำขอถอน ${row.requested_points} แต้ม · สถานะล่าสุด ${row.status}`} ]
+   :row.payload_messages;
+   if(!Array.isArray(messages)||messages.length!==1)throw new Error('line_payload_snapshot_missing');
+   await pushLine(row.recipient_user_id,messages,row.id,opts.fetch)}
   catch(e){const code=e instanceof Error&&'status' in e?Number((e as {status:number}).status):503;status=(code===503||code===429||code>=500)&&row.attempts<5?'RETRY':'FAILED';error='line_delivery_failed'}
   await scoped(pool,c=>c.query("UPDATE member_withdrawal_line_outbox SET status=$2,lease_until=NULL,next_attempt_at=now()+($3::integer*interval '1 second'),last_error=$4,sent_at=CASE WHEN $2='SENT' THEN now() ELSE sent_at END WHERE id=$1 AND status='PROCESSING' AND attempts=$5",[row.id,status,Math.min(3600,30*2**(row.attempts-1)),error,row.attempts]));
   if(status==='SENT')sent++;else if(status==='RETRY')retry++;else failed++;

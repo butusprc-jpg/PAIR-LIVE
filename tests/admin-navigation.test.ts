@@ -4,9 +4,10 @@ import {adminNavigationStatus,canOpenAdmin} from '../lib/client/admin-navigation
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createElement} from 'react';
 import {AdminSettingsLink} from '../components/AdminSettingsLink';
+import {LanguageProvider} from '../lib/LanguageProvider';
 
 test('member gear enters the existing LINE admin entry; server session still governs access',async()=>{
- assert.match(renderToStaticMarkup(createElement(AdminSettingsLink)),/href="\/\?view=admin"/);
+ assert.match(renderToStaticMarkup(createElement(LanguageProvider,null,createElement(AdminSettingsLink))),/href="\/\?view=admin"/);
  for(const response of [Response.json({ok:false},{status:401}),Response.json({ok:false},{status:403}),Response.json({ok:true,session:{admin:{role:'member'}}}),Response.json({ok:true,session:{admin:{role:'admin'}}},{status:503})]){
   assert.equal(await canOpenAdmin((async()=>response) as typeof fetch),false);
  }
