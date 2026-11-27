@@ -7,13 +7,29 @@ import type {BusinessSettingKey,BusinessSettings} from '../lib/rounds/business-s
 type Overview={settings:BusinessSettings;shopStatus:'UNCONFIGURED'|'OPEN'|'CLOSED';currentRound:{id:string;evenPoints:number;oddPoints:number;totalPoints:number;differencePoints:number;minRoundPoints:number|null}|null};
 const blank={sideDifferenceLimit:'',maxRoundPoints:'',minRoundPoints:'',adminFeeRate:'',open:'',close:''};
 export default function AdminBusinessSettings({role}:{role:'admin'|'operator'|'viewer'}){const {locale}=useLanguage();const ui=(key:string,values:Record<string,string|number>={})=>t(key,locale,values);
- const[data,setData]=useState<Overview|null>(null),[draft,setDraft]=useState(blank),[error,setError]=useState(false),[message,setMessage]=useState('');
+ const[data,setData]=useState<Overview|null>(null),[draft,setDraft]=useState(blank),[error,setError]=useState(false),[message,setMessage]=useState(''),[saving,setSaving]=useState<BusinessSettingKey|null>(null);
  useEffect(()=>{let active=true;fetch('/api/admin/settings/business',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error();return r.json()}).then((value:Overview)=>{if(!active)return;setData(value);setDraft({sideDifferenceLimit:value.settings.sideDifferenceLimit?.toString()??'',maxRoundPoints:value.settings.maxRoundPoints?.toString()??'',minRoundPoints:value.settings.minRoundPoints?.toString()??'',adminFeeRate:value.settings.adminFeeRate??'',open:value.settings.shopHours?.open??'',close:value.settings.shopHours?.close??''})}).catch(()=>{if(active)setError(true)});return()=>{active=false}},[]);
- async function save(key:BusinessSettingKey){try{const value=key==='shopHours'?(draft.open===''&&draft.close===''?null:{open:draft.open,close:draft.close}):key==='adminFeeRate'?(draft.adminFeeRate===''?null:draft.adminFeeRate):draft[key]===''?null:Number(draft[key]);const challenge=await fetch('/api/admin/auth/challenge',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose:'mutation'})}).then(r=>r.json());if(!challenge.ok)throw new Error();const response=await fetch('/api/admin/settings/business',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Admin-CSRF':challenge.csrfToken},body:JSON.stringify({key,value})});const result=await response.json();if(!response.ok)throw new Error(result.error);const refreshed=await fetch('/api/admin/settings/business',{cache:'no-store'}).then(r=>r.json()) as Overview;setData(refreshed);setMessage('บันทึกค่าสำหรับรอบถัดไปแล้ว')}catch{setMessage('บันทึกไม่สำเร็จ')}}
+ async function save(key:BusinessSettingKey){
+  if(saving!==null)return;
+  setSaving(key);setMessage('');
+  try{
+   const value=key==='shopHours'?(draft.open===''&&draft.close===''?null:{open:draft.open,close:draft.close}):key==='adminFeeRate'?(draft.adminFeeRate===''?null:draft.adminFeeRate):draft[key]===''?null:Number(draft[key]);
+   const challengeResponse=await fetch('/api/admin/auth/challenge',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose:'mutation'})});
+   const challenge=await challengeResponse.json();if(!challengeResponse.ok||!challenge.ok)throw new Error(challenge.error||'csrf_unavailable');
+   const response=await fetch('/api/admin/settings/business',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Admin-CSRF':challenge.csrfToken},body:JSON.stringify({key,value})});
+   const result=await response.json();if(!response.ok)throw new Error(result.error||'save_failed');
+   const check=await fetch('/api/admin/settings/business',{credentials:'same-origin',cache:'no-store'});
+   const refreshed=await check.json() as Overview;
+   if(!check.ok)throw new Error('readback_failed');
+   if(JSON.stringify(refreshed.settings[key])!==JSON.stringify(result.settings?.[key]))throw new Error('save_not_persisted');
+   setData(refreshed);setMessage('บันทึกค่าสำหรับรอบถัดไปแล้ว');
+  }catch(error){const code=error instanceof Error?error.message:'save_failed';setMessage('บันทึกไม่สำเร็จ ('+code+')')}
+  finally{setSaving(null)}
+ }
  const field=(key:'sideDifferenceLimit'|'maxRoundPoints'|'minRoundPoints',label:string,min:number)=><label>{ui(label)}<input className="field" type="number" min={min} step="1" value={draft[key]} onChange={e=>setDraft(v=>({...v,[key]:e.target.value}))} placeholder={ui("ยังไม่กำหนด")}/></label>;
  if(error)return <section className="card admin-round-settings"><h2>{ui("กติกาเพิ่มเติม")}</h2><p role="alert" className="muted">{ui("ยังไม่สามารถโหลดการตั้งค่าได้")}</p></section>;
  if(!data)return <section className="card admin-round-settings"><h2>{ui("กติกาเพิ่มเติม")}</h2><p className="muted">{ui("กำลังโหลดการตั้งค่า...")}</p></section>;
- const disabled=role!=='admin';
+ const disabled=role!=='admin'||saving!==null;
  return <>
  <section className="card admin-round-settings"><h2>{ui("ส่วนต่างแต้มคู่/คี่")}</h2><p className="muted">{ui("ยอดต่างรอบปัจจุบัน")} {data.currentRound?formatNumber(data.currentRound.differencePoints,locale):ui("ยังไม่มีรอบ")} {ui("แต้ม · ยอดคู่")} {data.currentRound?formatNumber(data.currentRound.evenPoints,locale):'–'} {ui("· ยอดคี่")} {data.currentRound?formatNumber(data.currentRound.oddPoints,locale):'–'}</p>{field('sideDifferenceLimit','ส่วนต่างที่ตั้งไว้ (ยังไม่บังคับใช้)',0)}<button className="primary" disabled={disabled} onClick={()=>void save('sideDifferenceLimit')}>{ui("บันทึกส่วนต่าง")}</button></section>
  <section className="card admin-round-settings"><h2>{ui("ยอดแต้มสูงสุดต่อรอบ")}</h2><p className="muted">{ui("รวมแต้มคู่และคี่ · มีผลกับรอบถัดไป")}</p>{field('maxRoundPoints','ยอดรวมสูงสุด',1)}<button className="primary" disabled={disabled} onClick={()=>void save('maxRoundPoints')}>{ui("บันทึกยอดสูงสุด")}</button></section>
