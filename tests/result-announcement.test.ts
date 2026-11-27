@@ -36,4 +36,5 @@ test('digit overlays the existing VDO.Ninja iframe without changing its URL or a
  assert.match(html,/class="live-result-overlay"[^>]*>3<\/div>/);
  assert.doesNotMatch(html,/คู่|คี่/);
  assert.equal((html.match(/<iframe/g)||[]).length,1);
+ assert.doesNotMatch(html,/sandbox=/);
 });
