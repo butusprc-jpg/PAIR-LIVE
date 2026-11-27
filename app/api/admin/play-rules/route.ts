@@ -10,8 +10,8 @@ export async function GET(request:Request){
 }
 export async function POST(request:Request){
  try{const access=await adminAccess(request,['admin'],true);if(!access.ok)return adminDenied(access.error);
- if(Number(request.headers.get('content-length'))>12000)return Response.json({error:'body_too_large'},{status:413});
- const raw=await request.text();if(raw.length>12000)return Response.json({error:'body_too_large'},{status:413});
+ if(Number(request.headers.get('content-length'))>120064)return Response.json({error:'body_too_large'},{status:413});
+ const raw=await request.text();if(new TextEncoder().encode(raw).byteLength>120064)return Response.json({error:'body_too_large'},{status:413});
  const body=JSON.parse(raw);if(typeof body?.content!=='string'||body.content.length>10000)return Response.json({error:'invalid_play_rules'},{status:400});
  return Response.json(await savePlayRules(database(),await channel(access.value.admin.id),access.value.admin.id,body.content),{headers:{'Cache-Control':'no-store'}})}
  catch{return Response.json({error:'play_rules_unavailable'},{status:503})}
