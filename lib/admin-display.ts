@@ -15,6 +15,6 @@ export function adminStatus(value:string|null|undefined,locale:Locale):string{
 }
 
 export function adminError(value:string,locale:Locale):string{
- if(/^[a-z][a-z0-9_]*$/i.test(value))return t('admin.error.generic',locale);
+ if(/^[a-z][a-z0-9_]*$/i.test(value))return `${t('admin.error.generic',locale)} (${value})`;
  return t(value,locale);
 }
