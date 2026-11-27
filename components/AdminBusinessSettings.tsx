@@ -15,14 +15,19 @@ export default function AdminBusinessSettings({role}:{role:'admin'|'operator'|'v
   try{
    const value=key==='shopHours'?(draft.open===''&&draft.close===''?null:{open:draft.open,close:draft.close}):key==='adminFeeRate'?(draft.adminFeeRate===''?null:draft.adminFeeRate):draft[key]===''?null:Number(draft[key]);
    const challengeResponse=await fetch('/api/admin/auth/challenge',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose:'mutation'})});
-   const challenge=await challengeResponse.json();if(!challengeResponse.ok||!challenge.ok)throw new Error(challenge.error||'csrf_unavailable');
+   const challenge=await challengeResponse.json();if(!challengeResponse.ok||!challenge.ok||typeof challenge.csrfToken!=='string')throw new Error(challenge.error||'csrf_unavailable');
    const response=await fetch('/api/admin/settings/business',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Admin-CSRF':challenge.csrfToken},body:JSON.stringify({key,value})});
    const result=await response.json();if(!response.ok)throw new Error(result.error||'save_failed');
-   const check=await fetch('/api/admin/settings/business',{credentials:'same-origin',cache:'no-store'});
-   const refreshed=await check.json() as Overview;
-   if(!check.ok)throw new Error('readback_failed');
-   if(JSON.stringify(refreshed.settings[key])!==JSON.stringify(result.settings?.[key]))throw new Error('save_not_persisted');
-   setData(refreshed);setMessage('บันทึกค่าสำหรับรอบถัดไปแล้ว');
+   if(!result.settings||!Object.prototype.hasOwnProperty.call(result.settings,key))throw new Error('save_not_persisted');
+   const persisted=result.settings as BusinessSettings;
+   const matches=key==='shopHours'&&value!==null&&persisted.shopHours!==null
+    ? persisted.shopHours.open===(value as {open:string;close:string}).open&&persisted.shopHours.close===(value as {open:string;close:string}).close
+    : persisted[key]===value;
+   if(!matches)throw new Error('save_not_persisted');
+   setData(previous=>previous?{...previous,settings:persisted}:previous);
+   setMessage('บันทึกค่าสำหรับรอบถัดไปแล้ว');
+   // Refresh secondary status separately; a failed read must not invalidate a committed save.
+   void fetch('/api/admin/settings/business',{credentials:'same-origin',cache:'no-store'}).then(r=>r.ok?r.json():null).then((updated:Overview|null)=>{if(updated)setData(previous=>previous&&previous.settings===persisted?updated:previous)}).catch(()=>{});
   }catch(error){const code=error instanceof Error?error.message:'save_failed';setMessage('บันทึกไม่สำเร็จ ('+code+')')}
   finally{setSaving(null)}
  }
