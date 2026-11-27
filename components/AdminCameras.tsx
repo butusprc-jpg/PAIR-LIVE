@@ -43,10 +43,13 @@ export default function AdminCameras({role,mode='viewer'}:{role:'admin'|'operato
    <button className="primary" type="button" disabled={busy||!!saveDisabledReason} onClick={()=>void act('save')}>{ui(busy?"กำลังบันทึก...":"บันทึก URL")}</button>
    {saveDisabledReason&&<p className="muted" role="status">{saveDisabledReason}</p>}
    <div className="camera-controls"><button className="primary" type="button" disabled={busy||role==='viewer'||camera.status!=='READY'||camera.displayEnabled||dirty} onClick={()=>void act('start')}>{ui("เริ่ม LIVE")}</button><button className="secondary" type="button" disabled={busy||role==='viewer'||!camera.displayEnabled} onClick={()=>void act('stop')}>{ui("หยุด LIVE")}</button></div>
-   <details><summary>{ui("ตรวจอ่านตัวเลขจากกล้อง")}</summary><AdminOcrRoi cameraId={camera.cameraId} canEdit={role==='admin'}/></details>
+   <p role="status">{camera.displayEnabled?ui("เผยแพร่ภาพให้สมาชิกแล้ว"):ui("ยังไม่เผยแพร่ภาพให้สมาชิก")}</p>
+   <h3>{ui("ภาพกล้อง")}</h3>
+   {camera.viewerUrl?<VdoViewer key={camera.viewerUrl} url={camera.viewerUrl} label={ui('ภาพกล้องหลัก')}/>:<div className="external-live-frame"><div className="external-live-empty">{ui("ยังไม่ตั้งค่า URL")}</div></div>}
+      <details><summary>{ui("ตรวจอ่านตัวเลขจากกล้อง")}</summary><AdminOcrRoi cameraId={camera.cameraId} canEdit={role==='admin'}/></details>
   </>:<>
    <h2>{ui("ภาพกล้อง")}</h2>
-   <div className="admin-camera-stage">{camera.viewerUrl?<VdoViewer url={camera.viewerUrl} label={ui('ภาพกล้องหลัก')}/>:<div className="external-live-frame"><div className="external-live-empty">{ui("ยังไม่ตั้งค่า URL")}</div></div>}<AdminRoundScreenStatus/></div>
+   <div className="admin-camera-stage">{camera.viewerUrl?<VdoViewer key={camera.viewerUrl} url={camera.viewerUrl} label={ui('ภาพกล้องหลัก')}/>:<div className="external-live-frame"><div className="external-live-empty">{ui("ยังไม่ตั้งค่า URL")}</div></div>}<AdminRoundScreenStatus/></div>
    <p role="status">{camera.displayEnabled?ui("เผยแพร่ภาพให้สมาชิกแล้ว"):ui("ยังไม่เผยแพร่ภาพให้สมาชิก")}</p>
    <div className="camera-controls"><button className="primary" type="button" disabled={busy||role==='viewer'||camera.status!=='READY'||camera.displayEnabled||dirty} onClick={()=>void act('start')}>{ui("เริ่ม LIVE")}</button><button className="secondary" type="button" disabled={busy||role==='viewer'||!camera.displayEnabled} onClick={()=>void act('stop')}>{ui("หยุด LIVE")}</button></div>
    <AdminRoundLiveControls role={role} compact/>
