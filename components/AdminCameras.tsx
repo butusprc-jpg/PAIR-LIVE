@@ -29,10 +29,12 @@ export default function AdminCameras({role,mode='viewer'}:{role:'admin'|'operato
    if(!savedCamera)throw Error('camera_readback_failed');
    if(action==='save'&&savedCamera.viewerUrl!==validatedViewerUrl(url))throw Error('camera_save_not_persisted');
    setState(next);setUrl(savedCamera.viewerUrl||'');
+   if(action==='start'&&!savedCamera.displayEnabled)throw Error('camera_publish_not_confirmed');
+   if(action==='stop'&&savedCamera.displayEnabled)throw Error('camera_stop_not_confirmed');
    setDirty(false);
    setMessage(action==='save'?ui("บันทึก URL แล้ว · กำลังรอภาพจากกล้อง"):action==='start'?(next.lineNoticeRecipients===0?ui("เปิด LIVE แล้ว แต่ยังไม่มีสมาชิกเปิดรับแจ้งเตือน LINE · สมาชิกต้องเปิดในการตั้งค่า"):ui('admin.camera.lineQueued',{count:next.lineNoticeRecipients??0})):ui("ซ่อนจอ LIVE ของสมาชิกแล้ว"));
    window.dispatchEvent(new Event('pair-live:admin-change'));
-  }catch(error){const code=error instanceof Error?error.message:'camera_unavailable';setMessage(errors[code]||(code==='camera_save_not_persisted'?'เซิร์ฟเวอร์รับคำขอแล้ว แต่ตรวจไม่พบ URL ที่บันทึก':code==='camera_readback_failed'?'ตรวจสอบค่าที่บันทึกไม่สำเร็จ':`บันทึกไม่สำเร็จ (${code})`));await load().catch(()=>{})}finally{setBusy(false)}
+  }catch(error){const code=error instanceof Error?error.message:'camera_unavailable';setMessage(errors[code]||(code==='camera_save_not_persisted'?'เซิร์ฟเวอร์รับคำขอแล้ว แต่ตรวจไม่พบ URL ที่บันทึก':code==='camera_readback_failed'?'ตรวจสอบค่าที่บันทึกไม่สำเร็จ':`ดำเนินการไม่สำเร็จ (${code})`));await load().catch(()=>{})}finally{setBusy(false)}
  }
  return <section className="card admin-cameras" aria-label={mode==='viewer'?ui("กล้องหลัก LIVE"):ui("ตั้งค่ากล้อง")}>
   {!state?<p role="status">{message||ui("กำลังโหลดการตั้งค่า...")}</p>:!camera?<p role="alert">{ui("ไม่พบกล้องหลักใน OA นี้")}</p>:mode==='settings'?<>
@@ -45,6 +47,8 @@ export default function AdminCameras({role,mode='viewer'}:{role:'admin'|'operato
   </>:<>
    <h2>{ui("ภาพกล้อง")}</h2>
    <div className="admin-camera-stage">{camera.viewerUrl?<VdoViewer url={camera.viewerUrl} label={ui('ภาพกล้องหลัก')}/>:<div className="external-live-frame"><div className="external-live-empty">{ui("ยังไม่ตั้งค่า URL")}</div></div>}<AdminRoundScreenStatus/></div>
+   <p role="status">{camera.displayEnabled?ui("เผยแพร่ภาพให้สมาชิกแล้ว"):ui("ยังไม่เผยแพร่ภาพให้สมาชิก")}</p>
+   <div className="camera-controls"><button className="primary" type="button" disabled={busy||role==='viewer'||camera.status!=='READY'||camera.displayEnabled||dirty} onClick={()=>void act('start')}>{ui("เริ่ม LIVE")}</button><button className="secondary" type="button" disabled={busy||role==='viewer'||!camera.displayEnabled} onClick={()=>void act('stop')}>{ui("หยุด LIVE")}</button></div>
    <AdminRoundLiveControls role={role} compact/>
   </>}
   {message&&state&&<p role="status">{adminError(message,locale)}</p>}
