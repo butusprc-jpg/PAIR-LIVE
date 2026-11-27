@@ -21,15 +21,14 @@ export default function AdminCameras({role,mode='viewer'}:{role:'admin'|'operato
   if(!camera||busy)return;setBusy(true);setMessage('');
   try{
    if(action==='save'&&!validatedViewerUrl(url)){setMessage(errors.invalid_viewer_url);return}
-   const challengeResponse=await fetch('/api/admin/auth/challenge',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose:'mutation'})});const challenge=await challengeResponse.json();if(!challengeResponse.ok)throw Error(challenge.error||'csrf_unavailable');
+   const challengeResponse=await fetch('/api/admin/auth/challenge',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose:'mutation'})});const challenge=await challengeResponse.json();if(!challengeResponse.ok||challenge.ok!==true||typeof challenge.csrfToken!=='string')throw Error(challenge.error||'csrf_unavailable');
    const response=await fetch('/api/admin/cameras',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Admin-CSRF':challenge.csrfToken},body:JSON.stringify({target:'primary',cameraId:camera.cameraId,revision:camera.revision,action,url:action==='save'?url:undefined})});const next=await response.json();if(!response.ok)throw Error(next.error||'camera_unavailable');
-   if(action==='save'){
-    const verified=await fetch('/api/admin/cameras',{credentials:'same-origin',cache:'no-store'});
-    const persisted=await verified.json();
-    if(!verified.ok)throw Error(persisted.error||'camera_readback_failed');
-    if(persisted.cameras.find((c:Camera)=>c.slot===1)?.viewerUrl!==validatedViewerUrl(url))throw Error('camera_save_not_persisted');
-    setState(persisted);setUrl(persisted.cameras.find((c:Camera)=>c.slot===1)?.viewerUrl||'');
-   }else{setState(next);setUrl(next.cameras.find((c:Camera)=>c.slot===1)?.viewerUrl||'')}
+   // POST returns readCameraSite after the transaction commits. Do not issue a
+   // second provisioning GET before acknowledging the committed configuration.
+   const savedCamera=next.cameras?.find((c:Camera)=>c.slot===1);
+   if(!savedCamera)throw Error('camera_readback_failed');
+   if(action==='save'&&savedCamera.viewerUrl!==validatedViewerUrl(url))throw Error('camera_save_not_persisted');
+   setState(next);setUrl(savedCamera.viewerUrl||'');
    setDirty(false);
    setMessage(action==='save'?ui("บันทึก URL แล้ว · กำลังรอภาพจากกล้อง"):action==='start'?(next.lineNoticeRecipients===0?ui("เปิด LIVE แล้ว แต่ยังไม่มีสมาชิกเปิดรับแจ้งเตือน LINE · สมาชิกต้องเปิดในการตั้งค่า"):ui('admin.camera.lineQueued',{count:next.lineNoticeRecipients??0})):ui("ซ่อนจอ LIVE ของสมาชิกแล้ว"));
    window.dispatchEvent(new Event('pair-live:admin-change'));
@@ -39,7 +38,7 @@ export default function AdminCameras({role,mode='viewer'}:{role:'admin'|'operato
   {!state?<p role="status">{message||ui("กำลังโหลดการตั้งค่า...")}</p>:!camera?<p role="alert">{ui("ไม่พบกล้องหลักใน OA นี้")}</p>:mode==='settings'?<>
    <h2>{ui("กล้องหลัก · VDO.Ninja")}</h2>
    <label>{ui("วาง URL VDO.Ninja")}<input className="field" type="url" inputMode="url" autoCapitalize="off" spellCheck={false} value={url} onChange={event=>{setUrl(event.target.value);setDirty(true)}} placeholder="https://vdo.ninja/?view=STREAM_ID" disabled={busy||role!=='admin'}/></label>
-   <button className="primary" type="button" disabled={busy||!!saveDisabledReason||!dirty} onClick={()=>void act('save')}>{ui("บันทึก URL")}</button>
+   <button className="primary" type="button" disabled={busy||!!saveDisabledReason} onClick={()=>void act('save')}>{ui(busy?"กำลังบันทึก...":"บันทึก URL")}</button>
    {saveDisabledReason&&<p className="muted" role="status">{saveDisabledReason}</p>}
    <div className="camera-controls"><button className="primary" type="button" disabled={busy||role==='viewer'||camera.status!=='READY'||camera.displayEnabled||dirty} onClick={()=>void act('start')}>{ui("เริ่ม LIVE")}</button><button className="secondary" type="button" disabled={busy||role==='viewer'||!camera.displayEnabled} onClick={()=>void act('stop')}>{ui("หยุด LIVE")}</button></div>
    <details><summary>{ui("ตรวจอ่านตัวเลขจากกล้อง")}</summary><AdminOcrRoi cameraId={camera.cameraId} canEdit={role==='admin'}/></details>
