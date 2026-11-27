@@ -11,7 +11,7 @@ type VideoStatus='CHECKING'|'CONFIRMED'|'UNVERIFIED';
 /** The cross-origin iframe can play video without returning VDO.Ninja stats. Do not display "checking" forever. */
 export default function VdoViewer({url,label,minimal=false,overlayDigit}:{url:string;label:string;minimal?:boolean;overlayDigit?:string|null}){
  const {locale}=useLanguage();const m=(key:string,values:Record<string,string|number>={})=>t(key,locale,values);
- const safeUrl=validatedViewerUrl(url),frame=useRef<HTMLIFrameElement>(null),[status,setStatus]=useState<VideoStatus>('CHECKING'),[frameLoaded,setFrameLoaded]=useState(false),[openError,setOpenError]=useState('');
+ const safeUrl=validatedViewerUrl(url),embedUrl=safeUrl?`${safeUrl}&noaudio`:null,frame=useRef<HTMLIFrameElement>(null),[status,setStatus]=useState<VideoStatus>('CHECKING'),[frameLoaded,setFrameLoaded]=useState(false),[openError,setOpenError]=useState('');
  useEffect(()=>{
   setStatus('CHECKING');setFrameLoaded(false);if(!safeUrl)return;
   let lastFrames=0,lastFrameAt=0;const startAt=Date.now();const token=Math.random().toString(36).slice(2);
@@ -51,9 +51,9 @@ export default function VdoViewer({url,label,minimal=false,overlayDigit}:{url:st
   catch{setOpenError(m('admin.viewer.externalError'))}
  }
  if(!safeUrl)return <div className="external-live-frame">{!minimal&&<div className="external-live-empty" role="status">{m('admin.viewer.invalidUrl')}</div>}</div>;
- return <><div className="external-live-frame"><iframe ref={frame} src={safeUrl} title={label}
+ return <><div className="external-live-frame"><iframe ref={frame} src={embedUrl!} title={label}
   onLoad={()=>setFrameLoaded(true)} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen
-  referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-presentation"/>
+  referrerPolicy="no-referrer"/>
   {overlayDigit&&<div className="live-result-overlay" role="status" aria-label={m('round.lastDigit',{digit:overlayDigit})}>{overlayDigit}</div>}
   {!minimal&&!frameLoaded&&status==='CHECKING'&&<div className="external-live-empty vdo-waiting" role="status">{m('admin.viewer.opening')}</div>}
  </div>{!minimal&&<><p className="muted" role="status">
