@@ -107,6 +107,7 @@ main:has(.member-transfer){padding-bottom:calc(120px + env(safe-area-inset-botto
 .member-flow{gap:10px}
 .member-camera-card{padding:8px}
 .member-camera-card .external-live-frame{margin-top:0}
+.member-direct-live{display:grid;place-items:center}.member-direct-live a{display:inline-flex;align-items:center;justify-content:center;min-height:52px;padding:12px 20px;text-decoration:none}
 .member-flow .camera-meta{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0}
 .member-flow .camera-meta>div{min-width:0;overflow-wrap:anywhere}
 .member-flow .live-actions{gap:8px}

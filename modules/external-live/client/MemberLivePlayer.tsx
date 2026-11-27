@@ -1,7 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {adaptivePoll} from '../../../lib/client/adaptive-poll';
-import VdoViewer from './VdoViewer';
+import {validatedViewerUrl} from './VdoViewer';
 import {visibleResultAnnouncement,type ResultAnnouncement} from '../../../lib/rounds/result-announcement';
 import {serverClockOffset} from '../../../lib/rounds/countdown';
 import {recordClientTiming} from '../../../lib/client/performance-timing';
@@ -19,5 +19,5 @@ export default function MemberLivePlayer({roundStatus}:{roundStatus?:string|null
  const digit=visibleResultAnnouncement(announcement,(now||Date.now())+offset)?.lastDigit??null;
  useEffect(()=>{if(!digit||!announcement||painted.current===announcement.roundId)return;const frame=requestAnimationFrame(()=>{const elapsed=Date.now()+offset-Date.parse(announcement.confirmedAt);if(elapsed>=0&&elapsed<10_000&&painted.current!==announcement.roundId){painted.current=announcement.roundId;const end=performance.now();performance.measure('pair.member.announcement.delay',{start:Math.max(0,end-elapsed),end})}});return()=>cancelAnimationFrame(frame)},[digit,announcement,offset]);
  if(!state||state.cameras.length===0)return <div className="external-live-frame" aria-label={m('camera.live')} aria-busy={!state&&!error}/>;
- return <div className={`camera-grid camera-grid-${state.layout}`} aria-label={m('member.cameraSite',{name:state.site?.name||'PAIR LIVE'})}>{state.cameras.map(camera=><section className="camera-tile" key={camera.cameraId}>{camera.viewerUrl?<VdoViewer url={camera.viewerUrl} label={camera.name} minimal overlayDigit={digit}/>:<div className="external-live-frame"/>}</section>)}</div>;
+ return <div className={`camera-grid camera-grid-${state.layout}`} aria-label={m('member.cameraSite',{name:state.site?.name||'PAIR LIVE'})}>{state.cameras.map(camera=>{const href=validatedViewerUrl(camera.viewerUrl||'');return <section className="camera-tile" key={camera.cameraId}><div className="external-live-frame member-direct-live">{href?<a className="primary" href={href} target="_blank" rel="noopener noreferrer" aria-label={`เปิดภาพสด ${camera.name} ในหน้าใหม่`}>เปิดภาพสดในหน้าใหม่</a>:<span role="status">ลิงก์ภาพสดไม่ถูกต้อง</span>}{digit&&<div className="live-result-overlay" role="status" aria-label={m('round.lastDigit',{digit})}>{digit}</div>}</div></section>})}</div>;
 }
