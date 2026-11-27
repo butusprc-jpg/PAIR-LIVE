@@ -7,6 +7,10 @@ on:
       - 'app/admin/**'
       - 'components/AdminCameras.tsx'
       - 'components/AdminBusinessSettings.tsx'
+      - 'components/AdminRoleManagement.tsx'
+      - 'components/Topup.tsx'
+      - 'app/api/admin/**'
+      - 'lib/admin-display.ts'
       - '.github/workflows/admin-save-regression.yml'
   workflow_dispatch:
 permissions:
